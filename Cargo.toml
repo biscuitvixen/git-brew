@@ -9,5 +9,8 @@ license = "MIT"
 name = "git-brew"
 path = "src/main.rs"
 
+[dependencies]
+ctrlc = "3"
+
 [build-dependencies]
 cmake = "0.1"

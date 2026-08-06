@@ -18,6 +18,7 @@
 #include <cuda_runtime.h>
 
 #include <cstdint>
+#include <mutex>
 
 #include "core/encode.hpp"
 #include "core/sha1.hpp"
@@ -161,6 +162,10 @@ extern "C" int32_t vanity_search(const uint32_t midstate[5],
     if (sms <= 0) {
         return GV_ERR_CUDA;
     }
+    // d_result and d_found are process-global device state, so concurrent
+    // calls would read each other's hits; one search runs at a time.
+    static std::mutex search_mutex;
+    std::lock_guard<std::mutex> guard(search_mutex);
     const unsigned long long sentinel = ~0ULL;
     const int zero = 0;
     if (cudaMemcpyToSymbol(d_result, &sentinel, sizeof sentinel) != cudaSuccess
