@@ -1,0 +1,29 @@
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 88
+# Put arguments and parameters on separate lines if they don't fit on one
+BinPackArguments: false
+BinPackParameters: false
+# When splitting long expressions put the operator on the new line
+BreakBeforeBinaryOperators: NonAssignment
+# When wrapping lines, indent the continuation by this
+ContinuationIndentWidth: 2
+# case: line up with the switch rather than being indented
+IndentCaseLabels: false
+# Align pointer to the right (int *ptr instead of int* ptr)
+PointerAlignment: Right
+# Google derives the alignment from each file; pin Right unconditionally
+DerivePointerAlignment: false
+SortIncludes: true
+ReflowComments: false
+---
+Language: Cpp
+# If the declaration parameters fit on the next line, still don't pack
+AllowAllParametersOfDeclarationOnNextLine: false
+# public, private align with the class declaration
+AccessModifierOffset: -2
+# Only allow empty functions to be fully declared on a single line
+AllowShortFunctionsOnASingleLine: Empty
+# Open multiple namespaces on the same line
+CompactNamespaces: true
+NamespaceIndentation: Inner
