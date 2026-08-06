@@ -1,3 +1,4 @@
+mod commit;
 mod ffi;
 mod sha1;
 
