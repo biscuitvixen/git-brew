@@ -21,8 +21,10 @@
 
 #if defined(__CUDACC__)
 #define GV_HD __host__ __device__
+#define GV_UNROLL _Pragma("unroll")
 #else
 #define GV_HD
+#define GV_UNROLL
 #endif
 
 namespace gv {
@@ -33,12 +35,6 @@ inline constexpr uint32_t kSha1InitState[5] = {0x67452301u,
                                                0x98BADCFEu,
                                                0x10325476u,
                                                0xC3D2E1F0u};
-
-/// SHA-1 round constants K for rounds [0,20), [20,40), [40,60), [60,80).
-inline constexpr uint32_t kSha1RoundK[4] = {0x5A827999u,
-                                            0x6ED9EBA1u,
-                                            0x8F1BBCDCu,
-                                            0xCA62C1D6u};
 
 /// Rotate x left by n bits; n must be in [1, 31] so neither shift is by 32.
 GV_HD inline uint32_t rotl32(uint32_t x, int n) {
@@ -79,23 +75,29 @@ GV_HD inline uint32_t sha1_parity(uint32_t x, uint32_t y, uint32_t z) {
 }
 
 /**
- * @brief One SHA-1 compression: folds a 64-byte block into the running state.
+ * @brief The 80 SHA-1 rounds, without the final state addition.
  *
- * @param state Running hash state h0..h4, updated in place.
- * @param w_in  The block as 16 big-endian 32-bit words (FIPS 180-4 §6.1.2).
+ * Exposed separately so the search kernel can run the rounds and test the
+ * digest's first words directly: word0 of the digest is h0 + a and word1 is
+ * h1 + b, so a prefix check needs neither the remaining three additions nor
+ * any digest assembly.
+ *
+ * @param w Block schedule words W0-W15; clobbered by the rolling schedule.
+ * @param a Working variable, seeded with h0; holds a_80 on return.
+ * @param b Working variable, seeded with h1; holds a_79 on return.
+ * @param c Working variable, seeded with h2.
+ * @param d Working variable, seeded with h3.
+ * @param e Working variable, seeded with h4.
  */
-GV_HD inline void sha1_compress(uint32_t state[5], const uint32_t w_in[16]) {
+GV_HD inline void sha1_rounds(uint32_t w[16],
+                              uint32_t &a,
+                              uint32_t &b,
+                              uint32_t &c,
+                              uint32_t &d,
+                              uint32_t &e) {
     // Rolling 16-word schedule: W[t] for t >= 16 overwrites slot t & 15,
     // trading the 80-word array for 16 registers (FIPS 180-4 §6.1.3 step 1).
-    uint32_t w[16];
-    for (int i = 0; i < 16; ++i) {
-        w[i] = w_in[i];
-    }
-    uint32_t a = state[0];
-    uint32_t b = state[1];
-    uint32_t c = state[2];
-    uint32_t d = state[3];
-    uint32_t e = state[4];
+    GV_UNROLL
     for (int t = 0; t < 80; ++t) {
         uint32_t wt;
         if (t < 16) {
@@ -105,20 +107,22 @@ GV_HD inline void sha1_compress(uint32_t state[5], const uint32_t w_in[16]) {
               w[(t + 13) & 15] ^ w[(t + 8) & 15] ^ w[(t + 2) & 15] ^ w[t & 15], 1);
             w[t & 15] = wt;
         }
+        // Round constants K per FIPS 180-4 §4.2.1; kept literal in the
+        // branches so device code needs no reference to host-side storage.
         uint32_t f;
         uint32_t k;
         if (t < 20) {
             f = sha1_ch(b, c, d);
-            k = kSha1RoundK[0];
+            k = 0x5A827999u;
         } else if (t < 40) {
             f = sha1_parity(b, c, d);
-            k = kSha1RoundK[1];
+            k = 0x6ED9EBA1u;
         } else if (t < 60) {
             f = sha1_maj(b, c, d);
-            k = kSha1RoundK[2];
+            k = 0x8F1BBCDCu;
         } else {
             f = sha1_parity(b, c, d);
-            k = kSha1RoundK[3];
+            k = 0xCA62C1D6u;
         }
         uint32_t tmp = rotl32(a, 5) + f + e + k + wt;
         e = d;
@@ -127,6 +131,25 @@ GV_HD inline void sha1_compress(uint32_t state[5], const uint32_t w_in[16]) {
         b = a;
         a = tmp;
     }
+}
+
+/**
+ * @brief One SHA-1 compression: folds a 64-byte block into the running state.
+ *
+ * @param state Running hash state h0..h4, updated in place.
+ * @param w_in  The block as 16 big-endian 32-bit words (FIPS 180-4 §6.1.2).
+ */
+GV_HD inline void sha1_compress(uint32_t state[5], const uint32_t w_in[16]) {
+    uint32_t w[16];
+    for (int i = 0; i < 16; ++i) {
+        w[i] = w_in[i];
+    }
+    uint32_t a = state[0];
+    uint32_t b = state[1];
+    uint32_t c = state[2];
+    uint32_t d = state[3];
+    uint32_t e = state[4];
+    sha1_rounds(w, a, b, c, d, e);
     state[0] += a;
     state[1] += b;
     state[2] += c;
