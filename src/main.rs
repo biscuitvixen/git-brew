@@ -1,5 +1,6 @@
 mod commit;
 mod ffi;
+mod git;
 mod sha1;
 
 fn main() {
