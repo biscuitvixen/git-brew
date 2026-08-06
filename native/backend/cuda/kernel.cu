@@ -26,10 +26,15 @@
 
 namespace {
 
-/// Kernel launch shape. Blocks are scaled off the SM count at launch;
-/// KERNEL_BLOCKS_PER_SM and KERNEL_THREADS are the tunable shape.
+/// Kernel launch shape, scaled off the SM count at launch. On GB10 the
+/// kernel is bound by the SHA-1 round dependency chain, not occupancy or
+/// memory: a warm sweep of threads in {128..512} x blocks-per-SM in
+/// {16..128} holds flat at 11.1-11.3 GH/s, so shape is not a throughput
+/// lever here. 256 threads is a clean warp multiple; the blocks-per-SM is
+/// set high so the adaptive driver's smaller tail chunks still cover all
+/// SMs rather than to raise steady-state rate.
 constexpr uint32_t KERNEL_THREADS = 256;
-constexpr uint32_t KERNEL_BLOCKS_PER_SM = 16;
+constexpr uint32_t KERNEL_BLOCKS_PER_SM = 32;
 
 /// How many candidates a thread hashes between polls of the found flag.
 /// Bounds post-hit wasted work without measurable polling overhead.
