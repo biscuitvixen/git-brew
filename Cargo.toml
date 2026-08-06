@@ -1,0 +1,10 @@
+[package]
+name = "git-brew"
+version = "0.1.0"
+edition = "2021"
+description = "Brute-force a chosen prefix onto a git commit hash on the GPU"
+license = "MIT"
+
+[[bin]]
+name = "git-brew"
+path = "src/main.rs"
