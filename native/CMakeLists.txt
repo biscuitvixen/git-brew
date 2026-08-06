@@ -12,4 +12,8 @@ if(BUILD_TESTING)
     add_executable(test_sha1 tests/test_sha1.cpp)
     target_include_directories(test_sha1 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME sha1_fixtures COMMAND test_sha1)
+
+    add_executable(test_encode tests/test_encode.cpp)
+    target_include_directories(test_encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME encode_fixtures COMMAND test_encode)
 endif()
