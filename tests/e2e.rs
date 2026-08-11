@@ -12,6 +12,18 @@ use std::process::{Command, Output, Stdio};
 
 const BIN: &str = env!("CARGO_BIN_EXE_git-brew");
 
+/// Mirrors crate::ffi::skip_gpu_tests (integration tests are a separate
+/// crate): tests that reach the GPU search early-return when
+/// GIT_BREW_SKIP_GPU_TESTS is set. The refusal and usage-error paths
+/// never touch the device and always run.
+fn skip_gpu_tests() -> bool {
+    if std::env::var_os("GIT_BREW_SKIP_GPU_TESTS").is_some() {
+        eprintln!("skipping: GIT_BREW_SKIP_GPU_TESTS is set");
+        return true;
+    }
+    false
+}
+
 fn scratch_repo(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("git-brew-e2e-{}-{name}", std::process::id()));
     if dir.exists() {
@@ -64,6 +76,9 @@ fn stderr_of(output: &Output) -> String {
 
 #[test]
 fn a_two_digit_prefix_lands_on_head_and_the_repo_stays_healthy() {
+    if skip_gpu_tests() {
+        return;
+    }
     let repo = scratch_repo("happy-path");
     let before = git(&repo, &["rev-parse", "HEAD"]);
     let output = run_tool(&repo, &["2b"]);
@@ -98,6 +113,9 @@ fn a_two_digit_prefix_lands_on_head_and_the_repo_stays_healthy() {
 
 #[test]
 fn dry_run_reports_the_hash_without_moving_head() {
+    if skip_gpu_tests() {
+        return;
+    }
     let repo = scratch_repo("dry-run");
     let before = git(&repo, &["rev-parse", "HEAD"]);
     let output = run_tool(&repo, &["--dry-run", "3c"]);
@@ -124,6 +142,9 @@ fn dry_run_reports_the_hash_without_moving_head() {
 
 #[test]
 fn the_configured_prefix_is_used_when_no_argument_is_given() {
+    if skip_gpu_tests() {
+        return;
+    }
     let repo = scratch_repo("config-prefix");
     git(&repo, &["config", "brew.prefix", "4d"]);
     let output = run_tool(&repo, &[]);
@@ -191,6 +212,10 @@ fn a_pushed_commit_is_refused_unless_forced() {
         "refusal must name the remote ref, got: {}",
         stderr_of(&refused)
     );
+    // The refusal above is CPU-only; the forced run below searches.
+    if skip_gpu_tests() {
+        return;
+    }
     let forced = run_tool(&repo, &["--force", "6f"]);
     assert!(
         forced.status.success(),
@@ -205,6 +230,9 @@ fn a_pushed_commit_is_refused_unless_forced() {
 
 #[test]
 fn rerunning_replaces_padding_instead_of_growing_the_object() {
+    if skip_gpu_tests() {
+        return;
+    }
     let repo = scratch_repo("idempotent");
     for prefix in ["a1", "b2"] {
         let output = run_tool(&repo, &[prefix]);

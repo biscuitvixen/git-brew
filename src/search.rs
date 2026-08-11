@@ -138,6 +138,9 @@ mod tests {
 
     #[test]
     fn a_short_prefix_search_finds_a_verified_hit() {
+        if crate::ffi::skip_gpu_tests() {
+            return;
+        }
         let f = fixture();
         let interrupt = AtomicBool::new(false);
         let mut updates = 0u32;
@@ -159,6 +162,9 @@ mod tests {
 
     #[test]
     fn an_impossible_target_over_a_small_range_reports_exhausted() {
+        if crate::ffi::skip_gpu_tests() {
+            return;
+        }
         let f = fixture();
         // A 12-nibble target taken from a candidate outside the range: a
         // collision inside it is a ~2^-38 event.

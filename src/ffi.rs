@@ -95,6 +95,18 @@ pub fn search_range(
     }
 }
 
+/// GPU-backed tests early-return when GIT_BREW_SKIP_GPU_TESTS is set, so
+/// the suite can run on machines without a device (CI build runners). The
+/// default, with the variable unset, runs everything.
+#[cfg(test)]
+pub(crate) fn skip_gpu_tests() -> bool {
+    if std::env::var_os("GIT_BREW_SKIP_GPU_TESTS").is_some() {
+        eprintln!("skipping: GIT_BREW_SKIP_GPU_TESTS is set");
+        return true;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +123,9 @@ mod tests {
 
     #[test]
     fn one_nibble_smoke_search_finds_a_candidate_on_the_gpu() {
+        if skip_gpu_tests() {
+            return;
+        }
         // Any midstate exercises the search path; correctness against real
         // digests is pinned by the native gpu_parity test.
         let midstate = [

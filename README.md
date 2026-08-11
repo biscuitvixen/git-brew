@@ -144,4 +144,7 @@ repositories:
 cargo test
 ```
 
-Everything from the Rust FFI smoke test onward needs a visible GPU.
+Tests that reach the GPU search skip themselves when
+`GIT_BREW_SKIP_GPU_TESTS` is set, which is how CI runs the suite on
+GPU-less runners; the native equivalent is `ctest -E gpu_parity`. With
+the variable unset, everything runs.

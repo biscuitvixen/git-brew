@@ -146,11 +146,6 @@ impl PaddedCommit {
         &self.prefix
     }
 
-    /// Full object length in bytes, wrapper included.
-    pub fn total_len(&self) -> u64 {
-        self.total_len
-    }
-
     /// The SHA-1-padded final block the FFI expects: placeholder pad
     /// characters, then 0x80, zeros, and the big-endian bit length.
     pub fn tail(&self) -> [u8; 64] {
@@ -260,14 +255,14 @@ mod tests {
             "midstate prefix must be whole blocks"
         );
         assert_eq!(
-            padded.total_len() % 64,
+            padded.total_len % 64,
             NUM_PAD_CHARS as u64,
             "object length must put the pad run on a block boundary"
         );
         let object = padded.object_for(0);
         assert_eq!(
             object.len() as u64,
-            padded.total_len(),
+            padded.total_len,
             "object length mismatch"
         );
         let nul = object.iter().position(|&b| b == 0).expect("wrapper NUL");
@@ -298,7 +293,7 @@ mod tests {
                 "unaligned prefix at content length {n}"
             );
             assert_eq!(
-                padded.total_len() % 64,
+                padded.total_len % 64,
                 NUM_PAD_CHARS as u64,
                 "unaligned total at content length {n}"
             );

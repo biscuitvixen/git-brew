@@ -1,0 +1,116 @@
+# Build jobs run inside the CUDA devel container so both runner arches
+# pin the identical toolkit; the smoke job runs on the bare runner, which
+# has neither a GPU nor a CUDA install, to prove the binary carries its
+# own runtime. GPU-backed tests are skipped via GIT_BREW_SKIP_GPU_TESTS
+# and stay a manual pre-release step on real hardware.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    container: nvidia/cuda:13.0.3-devel-ubuntu24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build git curl ca-certificates \
+            python3-pip
+      - name: Install Rust
+        run: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Format check
+        run: cargo fmt --check
+      - name: C++ format check
+        # Same pinned major as the local toolchain; an unpinned
+        # clang-format reflows across majors, making the gate flaky.
+        run: |
+          pip3 install --quiet --break-system-packages 'clang-format~=19.1'
+          git ls-files 'native/*.h' 'native/*.hpp' 'native/*.cpp' 'native/*.cu' \
+            | xargs clang-format --dry-run --Werror
+      - name: Native tests, CPU subset
+        # Explicit arch: the CMakeLists fallback is `native`, which needs
+        # a visible GPU to detect. gpu_parity still compiles; it cannot run.
+        run: |
+          cmake -S native -B native-ci -G Ninja \
+            -DBUILD_TESTING=ON -DCMAKE_CUDA_ARCHITECTURES=75-real
+          cmake --build native-ci
+          ctest --test-dir native-ci --output-on-failure -E gpu_parity
+      - name: Rust tests, GPU subset skipped
+        # --nocapture keeps the guards' "skipping:" lines in the log, so a
+        # green run still shows which tests did not actually search.
+        run: cargo test --release -- --nocapture
+        env:
+          GIT_BREW_SKIP_GPU_TESTS: "1"
+      - name: Clippy
+        run: cargo clippy --release --all-targets -- -D warnings
+      - name: Strip release binary
+        run: |
+          cargo build --release
+          strip target/release/git-brew
+      - uses: actions/upload-artifact@v4
+        with:
+          name: git-brew-linux-${{ matrix.arch }}
+          path: target/release/git-brew
+
+  smoke:
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: git-brew-linux-${{ matrix.arch }}
+      - name: Binary loads and runs without CUDA
+        run: |
+          chmod +x git-brew
+          ldd ./git-brew
+          ! ldd ./git-brew | grep -i cudart
+          ./git-brew --version
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [build, smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: git-brew-linux-*
+      - name: Package tarballs
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          for arch in x86_64 aarch64; do
+            chmod +x "git-brew-linux-$arch/git-brew"
+            tar -C "git-brew-linux-$arch" -czf \
+              "git-brew-$ver-linux-$arch.tar.gz" git-brew
+          done
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: git-brew-*.tar.gz
