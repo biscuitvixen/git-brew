@@ -8,8 +8,8 @@ the message, so nothing you can see changes.
 ```
 $ git brew c0ffee
 searching for prefix 'c0ffee': ~2^24 of 2^48 candidates expected
-   11.02 GH/s    0.31% swept      1 s elapsed
-7a3f9c1d... -> c0ffee2b8d4e6a1f0c9b7d5e3a2f8c6b4d1e0a9f
+
+9d000786cdc6fcfb772ec03bde1bb51e5fed37a3 -> c0ffee4ffc212a7760b30c407c87ad2ce16807c8
 ```
 
 The commit message, your tree, your author and date all stay exactly
@@ -87,6 +87,48 @@ git config --global alias.cb '!f() { git commit "$@" && git brew; }; f'
 The shell-function wrapper is load-bearing: a bare
 `!git commit "$@" && ...` alias appends the arguments twice, because
 git passes them through *and* `$@` expands.
+
+## A worked example
+
+Commit as normal, then point the tool at the result:
+
+```
+$ git commit -m "Add the frobnicator"
+$ git log --oneline -1
+9d00078 Add the frobnicator
+
+$ git brew c0ffee
+searching for prefix 'c0ffee': ~2^24 of 2^48 candidates expected
+
+9d000786cdc6fcfb772ec03bde1bb51e5fed37a3 -> c0ffee4ffc212a7760b30c407c87ad2ce16807c8
+
+$ git log --oneline -1
+c0ffee4 Add the frobnicator
+```
+
+Six digits is a 2^24 search, over before the progress meter draws.
+The message, tree, author and date are untouched; the padding is real
+but invisible:
+
+```
+$ git cat-file commit HEAD | tail -1 | cat -A
+                                               ^I^I^I^I ^I^I^I^I^I^I  ^I ^I   ^I^I     ^I^I
+```
+
+Longer prefixes take real time and keep a progress line updating while
+they sweep. `--dry-run` runs the same search but leaves `HEAD` alone,
+which is the way to feel out a prefix length before adopting it:
+
+```
+$ git brew --dry-run c0ffeebad
+searching for prefix 'c0ffeebad': ~2^36 of 2^48 candidates expected
+  11.25 GH/s    0.01% swept      2 s elapsed
+c0ffee4ffc212a7760b30c407c87ad2ce16807c8 -> c0ffeebadf60ed0751fa40c1f18e86d9b2d5f724 (dry run, nothing written)
+```
+
+Every session above is pasted from a live run on a GB10. The winning
+digits are a property of the commit being padded, so yours will
+differ; the rate is the part that should reproduce.
 
 ## What it refuses to do
 
