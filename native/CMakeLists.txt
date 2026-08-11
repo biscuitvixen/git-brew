@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.24)
 project(git_brew_native LANGUAGES CXX CUDA)
 
-# Plain 121, not 121a: the kernel needs nothing newer than lop3 (sm_50);
-# the a-suffix would only gate family-specific features away from a future
-# non-GB10 build of the same fatbin.
+# The shipped arch list lives in build.rs, which always passes this define.
+# The fallback serves only a standalone tree built to run ctest on a dev
+# machine, so it targets the local GPU. GPU-less builds must pass
+# -DCMAKE_CUDA_ARCHITECTURES explicitly; native detection needs a device.
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
-    set(CMAKE_CUDA_ARCHITECTURES 121)
+    set(CMAKE_CUDA_ARCHITECTURES native)
 endif()
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

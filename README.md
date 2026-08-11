@@ -33,9 +33,11 @@ boundary, which is what makes it fast instead of useless.
 
 ## Requirements
 
-- An NVIDIA GPU and CUDA (developed on a GB10 with CUDA 13.0).
-- A Rust toolchain (`rustup`, stable).
-- CMake >= 3.24, Ninja, and a C++17 compiler for the native library.
+- An NVIDIA GPU (sm_75 / Turing or newer) and its driver.
+- To build: the CUDA toolkit (developed against CUDA 13.0), a Rust
+  toolchain (`rustup`, stable), CMake >= 3.24, Ninja, and a C++17
+  compiler. A built binary needs none of these - the CUDA runtime is
+  linked in statically, so only the driver matters at run time.
 
 ## Build and install
 
@@ -47,11 +49,14 @@ cp target/release/git-brew ~/.local/bin/   # anywhere on PATH
 Being on `PATH` is all it takes: git's subcommand dispatch then gives
 you `git brew <prefix>` for free, no config anywhere.
 
-The native library builds for `sm_121` by default. For a different GPU,
-set the architecture at build time:
+The default build is a fatbinary: SASS for every architecture CUDA 13
+can target (sm_75 through sm_120, with minor-forward compatibility
+filling the gaps - a GB10's sm_121 runs the sm_120 cubin) plus sm_120
+PTX for future majors. One binary runs on any supported GPU. To narrow
+the build to a single architecture for faster dev iteration:
 
 ```
-GIT_BREW_CUDA_ARCH=90 cargo build --release   # e.g. Hopper
+GIT_BREW_CUDA_ARCH=121 cargo build --release   # e.g. GB10 only
 ```
 
 ## Usage
