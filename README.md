@@ -1,9 +1,20 @@
-# git-brew
+# ☕ git-brew
+
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/license/mit)
+[![CUDA](https://img.shields.io/badge/CUDA-sm__75%2B-76B900.svg)](#requirements)
+[![Rust](https://img.shields.io/badge/Rust-stable-dea584.svg)](rust-toolchain.toml)
+
+Every commit deserves to start the day with a little `c0ffee`!
 
 Brute-force a chosen hex prefix onto a git commit hash, on the GPU.
 Point it at `HEAD`, name a prefix, and it rewrites the commit so its
 SHA-1 starts with your digits - by appending invisible whitespace to
 the message, so nothing you can see changes.
+
+<!-- TODO: record on the GB10 with `vhs docs/demo.tape`, then
+     uncomment:
+![git brew finding a c0ffee prefix](docs/demo.gif)
+-->
 
 ```
 $ git brew c0ffee
@@ -16,20 +27,14 @@ The commit message, your tree, your author and date all stay exactly
 as they were. The only change is a run of trailing spaces and tabs on
 the last line, which every git UI ignores.
 
-## Why a GPU, and why CUDA
+## Why GPU accelerated?
+Smaller prefixes are easy to find on a CPU, but the search space grows
+exponentially with each hex digit. A 12-digit prefix is a 2^48 search,
+which is a lot of work for a CPU. A modern GPU can do it in hours.
 
-The honest answer is in `DESIGN.md`. The short version: SHA-1's round
-functions are three-input bitwise ops that collapse to a single
-`lop3.b32` each, and that plus Nsight Compute made CUDA the right first
-backend for a project whose entire point is hashes per second. A
-portable `wgpu` backend is a follow-up, not a promise.
-
-It leans on one trick worth knowing: SHA-1 processes 64-byte blocks in
-sequence, so if every byte that changes between candidates lives in the
-*final* block, the hash of everything before it is computed once on the
-host and the GPU does a single compression per candidate. The tool
-sizes a run of trailing whitespace to land exactly on that final block
-boundary, which is what makes it fast instead of useless.
+While this isn't the usual use case of a vanity commit hasher, being that
+the shortest prefix that GitHub shows is 7 hex digits, it is a fun way to
+show off a GPU's SHA-1 throughput and put that extra compute to use!
 
 ## Requirements
 
@@ -126,10 +131,6 @@ searching for prefix 'c0ffeebad': ~2^36 of 2^48 candidates expected
 c0ffee4ffc212a7760b30c407c87ad2ce16807c8 -> c0ffeebadf60ed0751fa40c1f18e86d9b2d5f724 (dry run, nothing written)
 ```
 
-Every session above is pasted from a live run on a GB10. The winning
-digits are a property of the commit being padded, so yours will
-differ; the rate is the part that should reproduce.
-
 ## What it refuses to do
 
 - **Amend a pushed commit.** If `HEAD` is contained in any
@@ -161,7 +162,7 @@ length (2^(4n) candidates for n hex digits):
 
 12 hex digits is right at the edge: the search space is 2^48 and so is
 the expected work, so a single sweep finds it only about two times in
-three. Past 12 is a different project.
+three.
 
 The kernel is bound by the SHA-1 round dependency chain, not occupancy
 or memory, so the throughput is flat across launch shapes - see the
