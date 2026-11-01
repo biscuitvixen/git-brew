@@ -6,26 +6,27 @@
 
 use std::env;
 
-/// Real SASS for every architecture CUDA 13 can target, plus sm_120 PTX for
-/// whatever comes after Blackwell. Plain -real, no a/f suffix: the kernel
-/// needs nothing newer than lop3 (sm_50). Minor-forward cubin compatibility
-/// fills the gaps: 80-real runs on sm_87 (Orin), 100-real on sm_103,
-/// 120-real on sm_121 (GB10). 110-real is listed because Thor is covered by
-/// neither a neighbouring cubin nor the sm_120 PTX.
-const DEFAULT_CUDA_ARCHS: &str =
-    "75-real;80-real;86-real;89-real;90-real;100-real;110-real;120-real;120-virtual";
-
 fn main() {
-    // The define is passed unconditionally: CMake caches it in OUT_DIR, so
-    // passing it only when the env var is set would leave a stale arch list
-    // behind after an override build.
-    let arch = env::var("GIT_BREW_CUDA_ARCH").unwrap_or_else(|_| DEFAULT_CUDA_ARCHS.to_string());
-    let dst = cmake::Config::new("native")
+    // An explicit arch list wins, then CMake's own CUDAARCHS convention.
+    // Without either, CMake picks the shipped fatbin list for the toolkit
+    // it found. The shipped-list switch is passed both ways because CMake
+    // caches it in OUT_DIR, and a stale ON would mask a later override.
+    let arch = env::var("GIT_BREW_CUDA_ARCH")
+        .or_else(|_| env::var("CUDAARCHS"))
+        .ok();
+    let mut config = cmake::Config::new("native");
+    config
         .generator("Ninja")
         .profile("Release")
         .define("BUILD_TESTING", "OFF")
-        .define("CMAKE_CUDA_ARCHITECTURES", &arch)
-        .build();
+        .define(
+            "GIT_BREW_SHIPPED_ARCHS",
+            if arch.is_some() { "OFF" } else { "ON" },
+        );
+    if let Some(arch) = &arch {
+        config.define("CMAKE_CUDA_ARCHITECTURES", arch);
+    }
+    let dst = config.build();
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
 
     let cuda_home = env::var("CUDA_HOME")
@@ -52,4 +53,5 @@ fn main() {
     println!("cargo:rerun-if-changed=native/backend");
     println!("cargo:rerun-if-changed=native/include");
     println!("cargo:rerun-if-env-changed=GIT_BREW_CUDA_ARCH");
+    println!("cargo:rerun-if-env-changed=CUDAARCHS");
 }
