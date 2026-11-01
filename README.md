@@ -1,6 +1,6 @@
 # ☕ git-brew
 
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/license/mit)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CUDA](https://img.shields.io/badge/CUDA-sm__75%2B-76B900.svg)](#requirements)
 [![Rust](https://img.shields.io/badge/Rust-stable-dea584.svg)](rust-toolchain.toml)
 
