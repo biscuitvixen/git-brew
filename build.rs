@@ -5,6 +5,8 @@
 //! `cargo build` produce a tool that is quietly hundreds of times slower.
 
 use std::env;
+use std::fs;
+use std::path::Path;
 
 fn main() {
     // An explicit arch list wins, then CMake's own CUDAARCHS convention.
@@ -29,10 +31,20 @@ fn main() {
     let dst = config.build();
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
 
-    let cuda_home = env::var("CUDA_HOME")
-        .or_else(|_| env::var("CUDA_PATH"))
-        .unwrap_or_else(|_| "/usr/local/cuda".to_string());
-    println!("cargo:rustc-link-search=native={cuda_home}/lib64");
+    // The runtime comes from the toolkit whose nvcc compiled the kernel, as
+    // located by CMake. That covers conda's targets/<triple>/lib layout and
+    // module-loaded toolkits without guessing at an install prefix.
+    let report = dst.join("share/cudart_static_path");
+    let cudart = fs::read_to_string(&report).unwrap_or_else(|e| {
+        panic!(
+            "native build left no cudart location at {}: {e}",
+            report.display()
+        )
+    });
+    let cudart_dir = Path::new(cudart.trim())
+        .parent()
+        .expect("cudart_static path has no parent directory");
+    println!("cargo:rustc-link-search=native={}", cudart_dir.display());
 
     // Left-to-right resolution: brew_native's runtime-API references
     // resolve from cudart_static, whose dlopen/shm_open/pthread references

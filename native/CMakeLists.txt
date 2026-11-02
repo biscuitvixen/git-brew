@@ -54,6 +54,15 @@ target_include_directories(
 # The cmake crate on the Rust side picks the library up from <out>/lib.
 install(TARGETS brew_native ARCHIVE DESTINATION lib)
 
+# build.rs links the CUDA runtime itself and reads its location from
+# <out>/share, so the runtime always matches the toolkit that compiled the
+# kernel. FindCUDAToolkit resolves against the enabled CUDA compiler.
+find_package(CUDAToolkit REQUIRED)
+file(GENERATE
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cudart_static_path
+    CONTENT "$<TARGET_FILE:CUDA::cudart_static>")
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cudart_static_path DESTINATION share)
+
 include(CTest)
 
 if(BUILD_TESTING)
