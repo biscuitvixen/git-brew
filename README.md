@@ -44,7 +44,22 @@ show off a GPU's SHA-1 throughput and put that extra compute to use!
   compiler. A built binary needs none of these - the CUDA runtime is
   linked in statically, so only the driver matters at run time.
 
-## Build and install
+## Install
+
+Packages for linux-64 and linux-aarch64 are published to the
+`biscuitvixen` channel on prefix.dev, so [pixi](https://pixi.sh)
+installs it globally:
+
+```
+pixi global install -c https://prefix.dev/biscuitvixen -c conda-forge git-brew
+pixi global update git-brew   # pick up a new release
+```
+
+The package is built against glibc 2.28 and asks for a CUDA 13 driver
+(580 or newer); pixi checks both before installing, rather than leaving
+a binary that fails at launch.
+
+## Build from source
 
 ```
 cargo build --release
