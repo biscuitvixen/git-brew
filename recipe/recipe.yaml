@@ -1,0 +1,64 @@
+# Keep in step with Cargo.toml; CI refuses a release tag that disagrees
+# with either.
+context:
+  version: "0.1.0"
+
+package:
+  name: git-brew
+  version: ${{ version }}
+
+source:
+  path: ..
+
+build:
+  number: 0
+  skip:
+    - not linux
+    - cuda_compiler_version == "None"
+  script:
+    # conda's nvcc activation exports a default CUDAARCHS, which build.rs
+    # honours as an override. Unset, CMake ships its own arch list.
+    - unset CUDAARCHS
+    - cargo-bundle-licenses --format yaml --output THIRDPARTY.yml
+    - cargo install --locked --no-track --bins --root ${{ PREFIX }} --path .
+
+requirements:
+  build:
+    - ${{ compiler("c") }}
+    - ${{ compiler("cxx") }}
+    - ${{ compiler("cuda") }}
+    - ${{ compiler("rust") }}
+    - ${{ stdlib("c") }}
+    - cargo-bundle-licenses
+    - cmake
+    - ninja
+  host:
+    - cuda-version ==${{ cuda_compiler_version }}
+    - cuda-cudart-dev
+    - cuda-cudart-static
+  # The runtime is linked statically, so the shared cudart is not needed at
+  # run time. cuda-version stays, carrying the __cuda driver floor.
+  ignore_run_exports:
+    from_package:
+      - cuda-cudart-dev
+
+tests:
+  - script:
+      - git-brew --version
+      - git-brew --help
+  - package_contents:
+      bin:
+        - git-brew
+
+about:
+  homepage: https://github.com/biscuitvixen/git-brew
+  repository: https://github.com/biscuitvixen/git-brew
+  summary: Brute-force a chosen prefix onto a git commit hash on the GPU
+  license: MIT
+  license_file:
+    - LICENSE
+    - THIRDPARTY.yml
+
+extra:
+  recipe-maintainers:
+    - biscuitvixen
