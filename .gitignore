@@ -13,3 +13,6 @@ DESIGN.md
 
 /target/
 /native/build/
+
+# Project-local mamba environment.
+ENV/
