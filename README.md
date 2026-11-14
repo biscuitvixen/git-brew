@@ -6,7 +6,8 @@
 
 Every commit deserves to start the day with a little `c0ffee`!
 
-Brute-force a chosen hex prefix onto a git commit hash, on the GPU.
+Give a git commit hash a chosen hex prefix, found by brute-force
+search on the GPU.
 Point it at `HEAD`, name a prefix, and it rewrites the commit so its
 SHA-1 starts with your digits - by appending invisible whitespace to
 the message, so nothing you can see changes.

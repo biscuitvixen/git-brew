@@ -2,7 +2,7 @@
 name = "git-brew"
 version = "0.1.0"
 edition = "2021"
-description = "Brute-force a chosen prefix onto a git commit hash on the GPU"
+description = "Give a git commit hash a chosen prefix by brute-force search on the GPU"
 license = "MIT"
 
 [[bin]]

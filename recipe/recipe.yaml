@@ -53,7 +53,7 @@ tests:
 about:
   homepage: https://github.com/biscuitvixen/git-brew
   repository: https://github.com/biscuitvixen/git-brew
-  summary: Brute-force a chosen prefix onto a git commit hash on the GPU
+  summary: Give a git commit hash a chosen prefix by brute-force search on the GPU
   license: MIT
   license_file:
     - LICENSE
