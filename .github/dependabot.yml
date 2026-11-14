@@ -1,0 +1,37 @@
+# The workflow actions name exact releases, the Rust toolchain is pinned
+# and Cargo.lock fixes every crate, so none of them moves on its own; this
+# keeps them current. Each action release is locked to its commit in
+# .github/workflows/actions.lock, and Dependabot regenerates the matching
+# entry in the same pull request. The CUDA container, rustup-init and the
+# compiler pins in recipe/variants.yaml are bumped by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # A compromised release is usually caught and pulled within days, so
+    # hold off on proposing one until it has been out for a week.
+    cooldown:
+      default-days: 7
+    # One pull request per month rather than one per action
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+  # Dependabot resolves crate updates with cargo itself, so the lockfile
+  # stays a set that cargo chose.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      crates:
+        patterns: ["*"]
