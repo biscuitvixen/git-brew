@@ -60,6 +60,12 @@ The package is built against glibc 2.28 and asks for a CUDA 13 driver
 (580 or newer); pixi checks both before installing, rather than leaving
 a binary that fails at launch.
 
+Each [GitHub release](https://github.com/biscuitvixen/git-brew/releases)
+also carries a plain binary for both architectures. Those are built on
+Ubuntu 24.04 and need glibc 2.39 or newer: Ubuntu 24.04, Debian 13,
+Fedora 40 and current Arch are fine; RHEL 8 and 9 are not, and want
+the conda package instead.
+
 ## Build from source
 
 ```
