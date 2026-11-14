@@ -35,7 +35,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container: nvidia/cuda:13.0.3-devel-ubuntu24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Install build tools
         run: |
           apt-get update
@@ -75,7 +75,7 @@ jobs:
         run: |
           cargo build --release
           strip target/release/git-brew
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: git-brew-linux-${{ matrix.arch }}
           path: target/release/git-brew
@@ -89,7 +89,7 @@ jobs:
           - { runner: ubuntu-24.04-arm, arch: aarch64 }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: git-brew-linux-${{ matrix.arch }}
       - name: Binary loads and runs without CUDA
@@ -107,7 +107,7 @@ jobs:
           - { runner: ubuntu-24.04-arm, arch: aarch64 }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Release tag matches the package version
@@ -122,7 +122,7 @@ jobs:
             { echo "::error::Cargo.toml is not at version $ver"; exit 1; }
           grep -qx "  version: \"$ver\"" recipe/recipe.yaml ||
             { echo "::error::recipe/recipe.yaml is not at version $ver"; exit 1; }
-      - uses: prefix-dev/rattler-build-action@1ca5f45832f419a46d1326ccc5861d7e14d67c44 # v0.2.39
+      - uses: prefix-dev/rattler-build-action@v0.2.39
         with:
           rattler-build-version: v0.80.0
           recipe-path: recipe/recipe.yaml
@@ -137,12 +137,12 @@ jobs:
     env:
       PREFIX_CHANNEL: biscuitvixen
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/download-artifact@v8.0.2
         with:
           pattern: conda-linux-*
           merge-multiple: true
           path: output
-      - uses: prefix-dev/rattler-build-action@1ca5f45832f419a46d1326ccc5861d7e14d67c44 # v0.2.39
+      - uses: prefix-dev/rattler-build-action@v0.2.39
         with:
           rattler-build-version: v0.80.0
           setup-only: "true"
@@ -160,7 +160,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8.0.2
         with:
           pattern: git-brew-linux-*
       - name: Package tarballs
@@ -171,6 +171,6 @@ jobs:
             tar -C "git-brew-linux-$arch" -czf \
               "git-brew-$ver-linux-$arch.tar.gz" git-brew
           done
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3.0.4
         with:
           files: git-brew-*.tar.gz
