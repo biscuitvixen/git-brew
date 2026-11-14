@@ -37,15 +37,17 @@ jobs:
     # release; the toolkit version is chosen by hand, not by Dependabot.
     container: nvidia/cuda:13.0.3-devel-ubuntu24.04@sha256:b7ae301dea2c162444795462ce17a05f6a516e5a75944b57af5b88540a1a2266
     steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
+      # Before the checkout: without git in the image, actions/checkout
+      # falls back to a source archive with no repository to list files from.
       - name: Install build tools
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build git curl ca-certificates \
             python3-pip
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - name: Install Rust
         # rustup-init at a fixed release, checked against the digest
         # published with it. The toolchain itself is the one
@@ -70,6 +72,7 @@ jobs:
       - name: C++ format check
         # The same release as the local toolchain; clang-format reflows
         # code between releases, so any other version makes the gate flaky.
+        shell: bash # pipefail, so a failed file listing fails the step
         run: |
           pip3 install --quiet --break-system-packages 'clang-format==19.1.7'
           git ls-files 'native/*.h' 'native/*.hpp' 'native/*.cpp' 'native/*.cu' \
