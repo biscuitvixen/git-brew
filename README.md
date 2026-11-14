@@ -2,7 +2,7 @@
 
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CUDA](https://img.shields.io/badge/CUDA-sm__75%2B-76B900.svg)](#requirements)
-[![Rust](https://img.shields.io/badge/Rust-stable-dea584.svg)](rust-toolchain.toml)
+[![Rust](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fbiscuitvixen%2Fgit-brew%2Fmain%2Frust-toolchain.toml&query=%24.toolchain.channel&label=Rust&color=dea584)](rust-toolchain.toml)
 
 Every commit deserves to start the day with a little `c0ffee`!
 

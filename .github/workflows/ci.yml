@@ -43,8 +43,23 @@ jobs:
             build-essential cmake ninja-build git curl ca-certificates \
             python3-pip
       - name: Install Rust
+        # rustup-init at a fixed release, checked against the digest
+        # published with it. The toolchain itself is the one
+        # rust-toolchain.toml names.
+        env:
+          RUSTUP_INIT_RELEASE: 1.29.3
         run: |
-          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          case "$(uname -m)" in
+            x86_64) sha=b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55 ;;
+            aarch64) sha=9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282 ;;
+          esac
+          curl -sSfo rustup-init \
+            "https://static.rust-lang.org/rustup/archive/$RUSTUP_INIT_RELEASE/$(uname -m)-unknown-linux-gnu/rustup-init"
+          echo "$sha  rustup-init" | sha256sum -c -
+          chmod +x rustup-init
+          ./rustup-init -y --profile minimal --default-toolchain none
+          rm rustup-init
+          "$HOME/.cargo/bin/rustup" toolchain install
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Format check
         run: cargo fmt --check
@@ -66,14 +81,14 @@ jobs:
       - name: Rust tests, GPU subset skipped
         # --nocapture keeps the guards' "skipping:" lines in the log, so a
         # green run still shows which tests did not actually search.
-        run: cargo test --release -- --nocapture
+        run: cargo test --release --locked -- --nocapture
         env:
           GIT_BREW_SKIP_GPU_TESTS: "1"
       - name: Clippy
-        run: cargo clippy --release --all-targets -- -D warnings
+        run: cargo clippy --release --locked --all-targets -- -D warnings
       - name: Strip release binary
         run: |
-          cargo build --release
+          cargo build --release --locked
           strip target/release/git-brew
       - uses: actions/upload-artifact@v7.0.2
         with:
