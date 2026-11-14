@@ -55,11 +55,11 @@ pub fn compress(state: &mut [u32; 5], block: &[u8; 64]) {
 /// number of bytes consumed. This is the midstate primitive: the caller
 /// keeps the unconsumed tail for the search or for `finalize`.
 pub fn update_blocks(state: &mut [u32; 5], data: &[u8]) -> usize {
-    let mut chunks = data.chunks_exact(64);
-    for block in &mut chunks {
-        compress(state, block.try_into().unwrap());
+    let (blocks, _tail) = data.as_chunks::<64>();
+    for block in blocks {
+        compress(state, block);
     }
-    data.len() - chunks.remainder().len()
+    blocks.len() * 64
 }
 
 /// Apply FIPS 180-4 padding to the trailing partial block (`tail.len() < 64`)
