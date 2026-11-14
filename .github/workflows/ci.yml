@@ -33,7 +33,9 @@ jobs:
           - { runner: ubuntu-24.04, arch: x86_64 }
           - { runner: ubuntu-24.04-arm, arch: aarch64 }
     runs-on: ${{ matrix.runner }}
-    container: nvidia/cuda:13.0.3-devel-ubuntu24.04
+    # By digest of the multi-arch index, so both runners pull the same
+    # release; the toolkit version is chosen by hand, not by Dependabot.
+    container: nvidia/cuda:13.0.3-devel-ubuntu24.04@sha256:b7ae301dea2c162444795462ce17a05f6a516e5a75944b57af5b88540a1a2266
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install build tools
@@ -64,10 +66,10 @@ jobs:
       - name: Format check
         run: cargo fmt --check
       - name: C++ format check
-        # Same pinned major as the local toolchain; an unpinned
-        # clang-format reflows across majors, making the gate flaky.
+        # The same release as the local toolchain; clang-format reflows
+        # code between releases, so any other version makes the gate flaky.
         run: |
-          pip3 install --quiet --break-system-packages 'clang-format~=19.1'
+          pip3 install --quiet --break-system-packages 'clang-format==19.1.7'
           git ls-files 'native/*.h' 'native/*.hpp' 'native/*.cpp' 'native/*.cu' \
             | xargs clang-format --dry-run --Werror
       - name: Native tests, CPU subset
