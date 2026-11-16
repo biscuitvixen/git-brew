@@ -196,6 +196,16 @@ jobs:
             tar -C "git-brew-linux-$arch" -czf \
               "git-brew-$ver-linux-$arch.tar.gz" git-brew
           done
-      - uses: softprops/action-gh-release@v3.0.4
-        with:
-          files: git-brew-*.tar.gz
+      - name: Publish the GitHub release
+        # A re-run after a partial upload finds the release already made,
+        # so it replaces the assets rather than failing on create.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" git-brew-*.tar.gz --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" git-brew-*.tar.gz \
+              --verify-tag --notes ""
+          fi
