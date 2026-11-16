@@ -2,7 +2,7 @@
 
 <p>
   <a href="https://github.com/biscuitvixen/git-brew/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/biscuitvixen/git-brew/ci.yml?branch=main&style=flat-square&label=build&logo=githubactions&logoColor=white"></a>
-  <a href="https://prefix.dev/channels/biscuitvixen/biscuitvixen"><img alt="Conda package" src="https://img.shields.io/badge/conda-prefix.dev-1F6FBF?style=flat-square&logo=condaforge&logoColor=white"></a>
+  <a href="https://prefix.dev/channels/@biscuitvixen/biscuitvixen/packages/git-brew"><img alt="Conda package" src="https://img.shields.io/badge/conda-prefix.dev-1F6FBF?style=flat-square&logo=condaforge&logoColor=white"></a>
   <a href="#requirements"><img alt="CUDA sm_75+" src="https://img.shields.io/badge/CUDA-sm__75%2B-76B900?style=flat-square&logo=nvidia&logoColor=white"></a>
   <a href="rust-toolchain.toml"><img alt="Rust" src="https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fbiscuitvixen%2Fgit-brew%2Fmain%2Frust-toolchain.toml&query=%24.toolchain.channel&label=Rust&color=B7410E&style=flat-square&logo=rust&logoColor=white"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/biscuitvixen/git-brew?style=flat-square&color=1F6FBF"></a>
