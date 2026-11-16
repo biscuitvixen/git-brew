@@ -75,7 +75,10 @@ jobs:
         shell: bash # pipefail, so a failed file listing fails the step
         run: |
           pip3 install --quiet --break-system-packages 'clang-format==19.1.7'
-          git ls-files 'native/*.h' 'native/*.hpp' 'native/*.cpp' 'native/*.cu' \
+          # The container runs as root over a workspace the runner user
+          # owns, which git refuses to read without this.
+          git -c safe.directory="$GITHUB_WORKSPACE" ls-files \
+            'native/*.h' 'native/*.hpp' 'native/*.cpp' 'native/*.cu' \
             | xargs clang-format --dry-run --Werror
       - name: Native tests, CPU subset
         # Explicit arch: the CMakeLists fallback is `native`, which needs
