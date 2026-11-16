@@ -1,0 +1,32 @@
+# Static analysis of the workflows themselves: token scope, credential
+# persistence, injection through expressions, unpinned actions, and
+# actions with published advisories. Findings go to code scanning, which
+# also annotates the pull request diff.
+#
+# The zizmor release is chosen by the action, which pins its wheels by
+# hash in its own tree, so it moves only when Dependabot bumps the action.
+
+name: zizmor
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write # SARIF upload to code scanning
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@v0.8.1
