@@ -217,3 +217,17 @@ Tests that reach the GPU search skip themselves when
 `GIT_BREW_SKIP_GPU_TESTS` is set, which is how CI runs the suite on
 GPU-less runners; the native equivalent is `ctest -E gpu_parity`. With
 the variable unset, everything runs.
+
+### Releasing
+
+[cargo-release](https://github.com/crate-ci/cargo-release) bumps the
+version in `Cargo.toml`, `Cargo.lock` and the conda recipe together:
+
+```
+cargo release minor              # dry run
+cargo release minor --execute    # bump, build, commit and tag locally
+git push && git push origin v0.2.0
+```
+
+Pushing the tag is the step that publishes the packages and the GitHub
+release.
