@@ -51,9 +51,9 @@ show off a GPU's SHA-1 throughput and put that extra compute to use!
 
 ## Install
 
-Packages for linux-64 and linux-aarch64 are published to the
+Packages for linux-64, linux-aarch64 and win-64 are published to the
 `biscuitvixen/biscuitvixen` channel on prefix.dev, so [pixi](https://pixi.sh)
-installs it globally:
+installs it globally (on Windows, `scoop install pixi` first):
 
 ```
 pixi global install -c https://prefix.dev/biscuitvixen/biscuitvixen -c conda-forge git-brew
