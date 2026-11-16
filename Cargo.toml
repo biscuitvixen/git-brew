@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Give a git commit hash a chosen prefix by brute-force search on the GPU"
 license = "MIT"
+# Needs a CUDA toolkit to build, so it ships as conda packages and
+# release binaries rather than through crates.io.
+publish = false
 
 [[bin]]
 name = "git-brew"
