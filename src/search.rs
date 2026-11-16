@@ -1,10 +1,14 @@
-//! Chunked search driver: sweeps the candidate space one FFI call at a time.
+//! Chunked search driver: sweeps the candidate space one launch at a time.
 //!
 //! One kernel launch per chunk keeps the GPU saturated while bounding how
 //! long a Ctrl-C or a progress update waits on a running launch. The chunk
 //! size adapts to the measured launch time instead of assuming a
 //! throughput, so the loop lands near the target cadence on any GPU
 //! without configuration.
+//!
+//! The loop reaches the hardware only through the Backend trait, so it
+//! holds no device state and its own logic is testable on a machine with
+//! no GPU or driver.
 //!
 //! Cancellation is a caller-owned AtomicBool checked between chunks; this
 //! module never installs signal handlers itself, which keeps it callable
@@ -14,7 +18,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::ffi;
+use crate::gpu::SearchError;
 
 /// Bits in the candidate space; mirrors the 48 pad characters.
 pub const SPACE_BITS: u32 = 48;
@@ -52,17 +56,37 @@ pub enum Outcome {
     Interrupted,
 }
 
+/// Something that can search one candidate range in a single call.
+pub trait Backend {
+    /// Search `range` for a candidate whose digest starts with
+    /// `prefix_nibbles`.
+    ///
+    /// `midstate` is the SHA-1 state after every block before the final
+    /// one; `tail` is the fully padded final block whose first 48 bytes
+    /// the search overwrites. Returns `Ok(Some(candidate))` on a hit,
+    /// `Ok(None)` when the range is exhausted. Which hit is returned when
+    /// several candidates in the range match is unspecified.
+    fn search_range(
+        &mut self,
+        midstate: &[u32; 5],
+        tail: &[u8; 64],
+        prefix_nibbles: &[u8],
+        range: Range<u64>,
+    ) -> Result<Option<u64>, SearchError>;
+}
+
 /// Sweep `range` for a candidate matching `prefix_nibbles`.
 ///
 /// `interrupt` is checked between chunks; `progress` runs after every chunk.
 pub fn run(
+    backend: &mut dyn Backend,
     midstate: &[u32; 5],
     tail: &[u8; 64],
     prefix_nibbles: &[u8],
     range: Range<u64>,
     interrupt: &AtomicBool,
     progress: &mut dyn FnMut(&Progress),
-) -> Result<Outcome, ffi::NativeError> {
+) -> Result<Outcome, SearchError> {
     let total = range.end - range.start;
     let started = Instant::now();
     let mut next = range.start;
@@ -73,7 +97,7 @@ pub fn run(
         }
         let end = range.end.min(next + chunk);
         let chunk_started = Instant::now();
-        if let Some(hit) = ffi::search_range(midstate, tail, prefix_nibbles, next..end)? {
+        if let Some(hit) = backend.search_range(midstate, tail, prefix_nibbles, next..end)? {
             return Ok(Outcome::Found(hit));
         }
         let took = chunk_started.elapsed();
@@ -100,7 +124,23 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::commit;
+    use crate::gpu::Searcher;
     use crate::sha1;
+
+    /// A backend for tests in which no range may be searched at all.
+    struct NeverCalled;
+
+    impl Backend for NeverCalled {
+        fn search_range(
+            &mut self,
+            _midstate: &[u32; 5],
+            _tail: &[u8; 64],
+            _prefix_nibbles: &[u8],
+            range: Range<u64>,
+        ) -> Result<Option<u64>, SearchError> {
+            panic!("backend was asked to search {range:?}");
+        }
+    }
 
     struct Fixture {
         midstate: [u32; 5],
@@ -138,13 +178,15 @@ mod tests {
 
     #[test]
     fn a_short_prefix_search_finds_a_verified_hit() {
-        if crate::ffi::skip_gpu_tests() {
+        if crate::gpu::skip_gpu_tests() {
             return;
         }
         let f = fixture();
+        let mut searcher = Searcher::new().expect("device must initialise");
         let interrupt = AtomicBool::new(false);
         let mut updates = 0u32;
         let outcome = run(
+            &mut searcher,
             &f.midstate,
             &f.tail,
             &[0xB],
@@ -162,7 +204,7 @@ mod tests {
 
     #[test]
     fn an_impossible_target_over_a_small_range_reports_exhausted() {
-        if crate::ffi::skip_gpu_tests() {
+        if crate::gpu::skip_gpu_tests() {
             return;
         }
         let f = fixture();
@@ -173,7 +215,9 @@ mod tests {
         let target = digest_nibbles(&digest, 12);
         let interrupt = AtomicBool::new(false);
         let mut last_done = 0u64;
+        let mut searcher = Searcher::new().expect("device must initialise");
         let outcome = run(
+            &mut searcher,
             &f.midstate,
             &f.tail,
             &target,
@@ -194,6 +238,7 @@ mod tests {
         let f = fixture();
         let interrupt = AtomicBool::new(true);
         let outcome = run(
+            &mut NeverCalled,
             &f.midstate,
             &f.tail,
             &[0x0],
