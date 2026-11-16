@@ -60,6 +60,12 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=dl");
         println!("cargo:rustc-link-lib=dylib=rt");
         println!("cargo:rustc-link-lib=dylib=pthread");
+    } else if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        // NVIDIA builds cudart_static.lib against the static C runtime
+        // (LIBCMT), while Rust and brew_native use the DLL runtime.
+        // Excluding LIBCMT resolves cudart's calls from the DLL runtime
+        // too, so the program carries one C runtime rather than two.
+        println!("cargo:rustc-link-arg=/NODEFAULTLIB:libcmt");
     }
 
     // Watched paths name the source subdirectories individually: watching
