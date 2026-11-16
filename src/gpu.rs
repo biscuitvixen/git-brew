@@ -399,6 +399,8 @@ pub(crate) fn skip_gpu_tests() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commit;
+    use crate::sha1;
 
     /// A structurally valid padded final block for a 240-byte object.
     fn smoke_tail() -> [u8; 64] {
@@ -436,19 +438,93 @@ mod tests {
         );
     }
 
-    // A tail without the 0x80 marker means the caller's block layout is
-    // wrong; the kernel would hash garbage, so it must never launch.
+    // Each case is a caller bug that would make the kernel hash garbage
+    // or run off the candidate space, so none may reach a launch.
     #[test]
-    fn malformed_tail_is_reported_as_bad_args() {
+    fn each_malformed_argument_is_rejected_before_any_launch() {
         let midstate = [0u32; 5];
-        let mut tail = smoke_tail();
-        tail[48] = 0; // No 0x80 marker.
-        let err = build_params(&midstate, &tail, &[0], &(0..10))
-            .expect_err("malformed tail must be rejected");
-        assert!(
-            matches!(err, SearchError::BadArgs(_)),
-            "expected BadArgs, got {err:?}"
-        );
+        let good_tail = smoke_tail();
+        let mut no_marker = good_tail;
+        no_marker[48] = 0;
+        let mut dirty_padding = good_tail;
+        dirty_padding[50] = 1;
+        let mut misaligned_length = good_tail;
+        misaligned_length[56..].copy_from_slice(&(241u64 * 8).to_be_bytes());
+
+        // The range is two numbers so a reversed one can be written down.
+        struct Case<'a> {
+            name: &'static str,
+            tail: &'a [u8; 64],
+            nibbles: &'a [u8],
+            start: u64,
+            end: u64,
+        }
+        let cases = [
+            Case {
+                name: "zero nibbles",
+                tail: &good_tail,
+                nibbles: &[],
+                start: 0,
+                end: 10,
+            },
+            Case {
+                name: "13 nibbles",
+                tail: &good_tail,
+                nibbles: &[0; 13],
+                start: 0,
+                end: 10,
+            },
+            Case {
+                name: "nibble value 16",
+                tail: &good_tail,
+                nibbles: &[16],
+                start: 0,
+                end: 10,
+            },
+            Case {
+                name: "reversed range",
+                tail: &good_tail,
+                nibbles: &[0],
+                start: 10,
+                end: 5,
+            },
+            Case {
+                name: "range past 2^48",
+                tail: &good_tail,
+                nibbles: &[0],
+                start: 0,
+                end: (1 << 48) + 1,
+            },
+            Case {
+                name: "tail without 0x80 marker",
+                tail: &no_marker,
+                nibbles: &[0],
+                start: 0,
+                end: 10,
+            },
+            Case {
+                name: "tail with non-zero padding",
+                tail: &dirty_padding,
+                nibbles: &[0],
+                start: 0,
+                end: 10,
+            },
+            Case {
+                name: "tail length off the pad block",
+                tail: &misaligned_length,
+                nibbles: &[0],
+                start: 0,
+                end: 10,
+            },
+        ];
+        for case in cases {
+            let outcome = build_params(&midstate, case.tail, case.nibbles, &(case.start..case.end));
+            assert!(
+                matches!(outcome, Err(SearchError::BadArgs(_))),
+                "{}: expected BadArgs, got {outcome:?}",
+                case.name
+            );
+        }
     }
 
     // The masks decide which digest bits the kernel compares; a 9-nibble
@@ -463,5 +539,132 @@ mod tests {
         assert_eq!(p.target1, 0x9000_0000, "word1 target");
         assert_eq!(p.mask1, 0xF000_0000, "word1 mask");
         assert_eq!(p.total_len, 240, "object length from the tail");
+    }
+
+    /// A real prepared commit: its midstate, its padded tail, and the
+    /// host-side object builder the digests are checked against.
+    struct Fixture {
+        midstate: [u32; 5],
+        tail: [u8; 64],
+        padded: commit::PaddedCommit,
+    }
+
+    fn fixture() -> Fixture {
+        let content = b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
+            author A <a@example.com> 1700000000 +0000\n\
+            committer C <c@example.com> 1700000000 +0000\n\
+            \n\
+            GPU parity fixture\n";
+        let padded = commit::prepare(content).expect("fixture must prepare");
+        let mut midstate = sha1::INIT_STATE;
+        sha1::update_blocks(&mut midstate, padded.midstate_prefix());
+        Fixture {
+            midstate,
+            tail: padded.tail(),
+            padded,
+        }
+    }
+
+    /// Deterministic 48-bit candidate stream (Knuth MMIX LCG, high bits).
+    fn next_candidate(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (*state >> 16) & ((1 << 48) - 1)
+    }
+
+    /// First 12 hex digits of the host digest for `candidate`.
+    fn host_nibbles(f: &Fixture, candidate: u64) -> [u8; 12] {
+        let digest = sha1::digest(&f.padded.object_for(candidate));
+        std::array::from_fn(|i| {
+            if i % 2 == 0 {
+                digest[i / 2] >> 4
+            } else {
+                digest[i / 2] & 0xF
+            }
+        })
+    }
+
+    // Host-vs-device parity through the real search path. For each sampled
+    // candidate the host hashes the full object, takes its first 12 hex
+    // digits as the target, and requires the GPU to recover exactly that
+    // candidate from a narrow bracketing range. A 12-nibble target makes a
+    // different-candidate collision within the bracket a 2^-48 event, so
+    // any mismatch is a real divergence between the host SHA-1 and object
+    // encoding and the device core.
+    #[test]
+    fn the_gpu_recovers_candidates_hashed_on_the_host() {
+        if skip_gpu_tests() {
+            return;
+        }
+        let f = fixture();
+        let mut searcher = Searcher::new().expect("device must initialise");
+        let mut rng = 20260806u64;
+        for trial in 0..1000 {
+            let candidate = next_candidate(&mut rng);
+            let target = host_nibbles(&f, candidate);
+            let range = candidate.saturating_sub(500)..candidate + 500;
+            let hit = searcher
+                .search_range(&f.midstate, &f.tail, &target, range)
+                .expect("search near a known candidate must not error");
+            // One divergence means the core differs; the assert stops the
+            // run at the first.
+            assert_eq!(
+                hit,
+                Some(candidate),
+                "trial {trial}: GPU did not recover the host-hashed candidate"
+            );
+        }
+    }
+
+    // The no-hit path: a full sweep with nothing to find, and a range with
+    // nothing in it, must both come back empty and not report a stale hit.
+    #[test]
+    fn a_target_outside_the_range_and_an_empty_range_report_no_hit() {
+        if skip_gpu_tests() {
+            return;
+        }
+        let f = fixture();
+        let mut searcher = Searcher::new().expect("device must initialise");
+        // A 12-nibble target from a candidate outside the searched range:
+        // the odds any of the 999 range members collide are ~999 * 2^-48.
+        let mut rng = 424242u64;
+        let candidate = next_candidate(&mut rng);
+        let target = host_nibbles(&f, candidate);
+        let outside = searcher
+            .search_range(
+                &f.midstate,
+                &f.tail,
+                &target,
+                candidate + 1..candidate + 1000,
+            )
+            .expect("search must not error");
+        assert_eq!(outside, None, "target outside the range must not be found");
+        let empty = searcher
+            .search_range(&f.midstate, &f.tail, &target, candidate..candidate)
+            .expect("empty search must not error");
+        assert_eq!(empty, None, "empty range must not report a hit");
+    }
+
+    // The word0 mask at its narrowest, for every digit value: a 1-nibble
+    // search must find some candidate fast, and the host must agree.
+    #[test]
+    fn every_one_nibble_target_is_found_and_verifies_on_the_host() {
+        if skip_gpu_tests() {
+            return;
+        }
+        let f = fixture();
+        let mut searcher = Searcher::new().expect("device must initialise");
+        for nibble in 0..16u8 {
+            let hit = searcher
+                .search_range(&f.midstate, &f.tail, &[nibble], 0..1 << 20)
+                .expect("1-nibble search must not error")
+                .unwrap_or_else(|| panic!("no hit for nibble {nibble:#x} in 2^20 candidates"));
+            assert_eq!(
+                host_nibbles(&f, hit)[0],
+                nibble,
+                "GPU hit {hit:#x} does not verify on the host"
+            );
+        }
     }
 }
