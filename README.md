@@ -6,7 +6,8 @@
 
 Every commit deserves to start the day with a little `c0ffee`!
 
-Brute-force a chosen hex prefix onto a git commit hash, on the GPU.
+Give a git commit hash a chosen hex prefix, found by brute-force
+search on the GPU.
 Point it at `HEAD`, name a prefix, and it rewrites the commit so its
 SHA-1 starts with your digits - by appending invisible whitespace to
 the message, so nothing you can see changes.
@@ -44,7 +45,28 @@ show off a GPU's SHA-1 throughput and put that extra compute to use!
   compiler. A built binary needs none of these - the CUDA runtime is
   linked in statically, so only the driver matters at run time.
 
-## Build and install
+## Install
+
+Packages for linux-64 and linux-aarch64 are published to the
+`biscuitvixen` channel on prefix.dev, so [pixi](https://pixi.sh)
+installs it globally:
+
+```
+pixi global install -c https://prefix.dev/biscuitvixen -c conda-forge git-brew
+pixi global update git-brew   # pick up a new release
+```
+
+The package is built against glibc 2.28 and asks for a CUDA 13 driver
+(580 or newer); pixi checks both before installing, rather than leaving
+a binary that fails at launch.
+
+Each [GitHub release](https://github.com/biscuitvixen/git-brew/releases)
+also carries a plain binary for both architectures. Those are built on
+Ubuntu 24.04 and need glibc 2.39 or newer: Ubuntu 24.04, Debian 13,
+Fedora 40 and current Arch are fine; RHEL 8 and 9 are not, and want
+the conda package instead.
+
+## Build from source
 
 ```
 cargo build --release

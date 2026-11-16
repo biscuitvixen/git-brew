@@ -1,0 +1,31 @@
+# Build matrix for rattler-build, one variant per platform.
+#
+# CUDA stays on 13.0, the toolkit the kernel was developed and benchmarked
+# against; the package then asks for a CUDA 13 driver (>= 580) and nothing
+# newer. GCC 14 sits inside the host compiler range nvcc 13.0 accepts.
+# glibc 2.28 is the oldest sysroot CUDA 13 supports, which is also what
+# lets the package run on the RHEL 8 era machines at Diamond.
+
+cuda_compiler:
+  - cuda-nvcc
+cuda_compiler_version:
+  - "13.0"
+
+c_compiler:
+  - gcc
+c_compiler_version:
+  - "14"
+cxx_compiler:
+  - gxx
+cxx_compiler_version:
+  - "14"
+
+c_stdlib:
+  - sysroot
+c_stdlib_version:
+  - "2.28"
+
+rust_compiler:
+  - rust
+rust_compiler_version:
+  - "1.99"

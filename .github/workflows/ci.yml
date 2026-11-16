@@ -3,6 +3,12 @@
 # has neither a GPU nor a CUDA install, to prove the binary carries its
 # own runtime. GPU-backed tests are skipped via GIT_BREW_SKIP_GPU_TESTS
 # and stay a manual pre-release step on real hardware.
+#
+# The conda job builds the same source with conda-forge's toolchain, whose
+# glibc 2.28 sysroot is what lets the package run on older distributions
+# than the runner. Tagged releases publish those packages to prefix.dev
+# through trusted publishing: the job's OIDC token is the credential, so
+# the repository holds no API key.
 
 name: ci
 
@@ -92,6 +98,60 @@ jobs:
           ldd ./git-brew
           ! ldd ./git-brew | grep -i cudart
           ./git-brew --version
+
+  conda:
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Release tag matches the package version
+        # The version is written in both Cargo.toml and the recipe; a tag
+        # that disagrees with either would publish a mislabelled package.
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          ver="${TAG#v}"
+          grep -qx "version = \"$ver\"" Cargo.toml ||
+            { echo "::error::Cargo.toml is not at version $ver"; exit 1; }
+          grep -qx "  version: \"$ver\"" recipe/recipe.yaml ||
+            { echo "::error::recipe/recipe.yaml is not at version $ver"; exit 1; }
+      - uses: prefix-dev/rattler-build-action@1ca5f45832f419a46d1326ccc5861d7e14d67c44 # v0.2.39
+        with:
+          rattler-build-version: v0.80.0
+          recipe-path: recipe/recipe.yaml
+          artifact-name: conda-linux-${{ matrix.arch }}
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [build, smoke, conda]
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write # trusted publishing to prefix.dev
+    env:
+      PREFIX_CHANNEL: biscuitvixen
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: conda-linux-*
+          merge-multiple: true
+          path: output
+      - uses: prefix-dev/rattler-build-action@1ca5f45832f419a46d1326ccc5861d7e14d67c44 # v0.2.39
+        with:
+          rattler-build-version: v0.80.0
+          setup-only: "true"
+      - name: Upload to prefix.dev
+        # --skip-existing lets a re-run of a partly published tag finish
+        # instead of failing on the packages already there.
+        run: |
+          find output -name '*.conda' -print0 |
+            xargs -0 rattler-build upload prefix --skip-existing
 
   release:
     if: github.ref_type == 'tag'
