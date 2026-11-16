@@ -6,9 +6,12 @@
 #
 # The conda job builds the same source with conda-forge's toolchain, whose
 # glibc 2.28 sysroot is what lets the package run on older distributions
-# than the runner. Tagged releases publish those packages to prefix.dev
-# through trusted publishing: the job's OIDC token is the credential, so
-# the repository holds no API key.
+# than the runner. It is also the only Windows build: conda-forge supplies
+# the Visual Studio activation and the CUDA toolkit that a bare Windows
+# runner lacks, and the package test confirms the program starts with no
+# CUDA runtime DLL present. Tagged releases publish those packages to
+# prefix.dev through trusted publishing: the job's OIDC token is the
+# credential, so the repository holds no API key.
 
 name: ci
 
@@ -128,8 +131,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - { runner: ubuntu-24.04, arch: x86_64 }
-          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+          - { runner: ubuntu-24.04, platform: linux-64 }
+          - { runner: ubuntu-24.04-arm, platform: linux-aarch64 }
+          - { runner: windows-2025, platform: win-64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7.0.1
@@ -138,7 +142,9 @@ jobs:
       - name: Release tag matches the package version
         # The version is written in both Cargo.toml and the recipe; a tag
         # that disagrees with either would publish a mislabelled package.
-        if: github.ref_type == 'tag'
+        # The files are the same on every runner, and a Windows checkout
+        # may convert them to CRLF, which the exact-line match would miss.
+        if: github.ref_type == 'tag' && runner.os == 'Linux'
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -151,7 +157,7 @@ jobs:
         with:
           rattler-build-version: v0.80.0
           recipe-path: recipe/recipe.yaml
-          artifact-name: conda-linux-${{ matrix.arch }}
+          artifact-name: conda-${{ matrix.platform }}
 
   publish:
     if: github.ref_type == 'tag'
@@ -164,7 +170,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8.0.2
         with:
-          pattern: conda-linux-*
+          pattern: conda-*
           merge-multiple: true
           path: output
       - uses: prefix-dev/rattler-build-action@v0.2.39
