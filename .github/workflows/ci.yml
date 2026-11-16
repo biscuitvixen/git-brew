@@ -160,7 +160,7 @@ jobs:
     permissions:
       id-token: write # trusted publishing to prefix.dev
     env:
-      PREFIX_CHANNEL: biscuitvixen
+      PREFIX_CHANNEL: biscuitvixen/biscuitvixen # namespace/channel
     steps:
       - uses: actions/download-artifact@v8.0.2
         with:
