@@ -7,6 +7,7 @@
 //! returns is trusted without reverification.
 
 mod commit;
+mod cuda;
 mod ffi;
 mod git;
 mod search;
