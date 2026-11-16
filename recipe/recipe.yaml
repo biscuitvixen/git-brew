@@ -13,14 +13,19 @@ source:
 build:
   number: 0
   skip:
-    - not linux
+    - not (linux or win)
     - cuda_compiler_version == "None"
   script:
     # conda's nvcc activation exports a default CUDAARCHS, which build.rs
     # honours as an override. Unset, CMake ships its own arch list.
-    - unset CUDAARCHS
+    - if: unix
+      then: unset CUDAARCHS
+      else: set "CUDAARCHS="
     - cargo-bundle-licenses --format yaml --output THIRDPARTY.yml
-    - cargo install --locked --no-track --bins --root ${{ PREFIX }} --path .
+    # Windows packages keep their programs under Library\bin.
+    - if: unix
+      then: cargo install --locked --no-track --bins --root ${{ PREFIX }} --path .
+      else: cargo install --locked --no-track --bins --root %LIBRARY_PREFIX% --path .
 
 requirements:
   build:

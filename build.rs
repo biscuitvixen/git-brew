@@ -50,12 +50,23 @@ fn main() {
     // resolve from cudart_static, whose dlopen/shm_open/pthread references
     // resolve from the shared libraries after it. dl/rt/pthread are empty
     // compat shims on glibc >= 2.34 but load-bearing on older systems.
+    // MSVC pulls in its own C++ runtime and has no counterparts to these,
+    // so a Windows target links the two static libraries alone. The target
+    // is read from cargo, since cfg! here describes the build host.
     println!("cargo:rustc-link-lib=static=brew_native");
     println!("cargo:rustc-link-lib=static=cudart_static");
-    println!("cargo:rustc-link-lib=dylib=stdc++");
-    println!("cargo:rustc-link-lib=dylib=dl");
-    println!("cargo:rustc-link-lib=dylib=rt");
-    println!("cargo:rustc-link-lib=dylib=pthread");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+        println!("cargo:rustc-link-lib=dylib=dl");
+        println!("cargo:rustc-link-lib=dylib=rt");
+        println!("cargo:rustc-link-lib=dylib=pthread");
+    } else if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        // NVIDIA builds cudart_static.lib against the static C runtime
+        // (LIBCMT), while Rust and brew_native use the DLL runtime.
+        // Excluding LIBCMT resolves cudart's calls from the DLL runtime
+        // too, so the program carries one C runtime rather than two.
+        println!("cargo:rustc-link-arg=/NODEFAULTLIB:libcmt");
+    }
 
     // Watched paths name the source subdirectories individually: watching
     // native/ itself would also watch native/build, the standalone ctest
