@@ -1,7 +1,7 @@
 # Build jobs run inside the CUDA devel container so both runner arches
 # pin the identical toolkit; the smoke job runs on the bare runner, which
-# has neither a GPU nor a CUDA install, to prove the binary carries its
-# own runtime. GPU-backed tests are skipped via GIT_BREW_SKIP_GPU_TESTS
+# has neither a GPU nor a CUDA install, to prove the binary links no CUDA
+# library. GPU-backed tests are skipped via GIT_BREW_SKIP_GPU_TESTS
 # and stay a manual pre-release step on real hardware.
 #
 # The conda job builds the same source with conda-forge's toolchain, whose
@@ -83,14 +83,15 @@ jobs:
           git -c safe.directory="$GITHUB_WORKSPACE" ls-files \
             'native/*.h' 'native/*.hpp' 'native/*.cpp' 'native/*.cu' \
             | xargs clang-format --dry-run --Werror
-      - name: Native tests, CPU subset
+      - name: Native tests
         # Explicit arch: the CMakeLists fallback is `native`, which needs
-        # a visible GPU to detect. gpu_parity still compiles; it cannot run.
+        # a visible GPU to detect. The kernel image still compiles here;
+        # the tests themselves are host-only.
         run: |
           cmake -S native -B native-ci -G Ninja \
             -DBUILD_TESTING=ON -DCMAKE_CUDA_ARCHITECTURES=75-real
           cmake --build native-ci
-          ctest --test-dir native-ci --output-on-failure -E gpu_parity
+          ctest --test-dir native-ci --output-on-failure
       - name: Rust tests, GPU subset skipped
         # --nocapture keeps the guards' "skipping:" lines in the log, so a
         # green run still shows which tests did not actually search.
@@ -124,7 +125,7 @@ jobs:
         run: |
           chmod +x git-brew
           ldd ./git-brew
-          ! ldd ./git-brew | grep -i cudart
+          ! ldd ./git-brew | grep -iE 'cuda|stdc\+\+'
           ./git-brew --version
 
   conda:

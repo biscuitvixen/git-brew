@@ -37,15 +37,18 @@ requirements:
     - cargo-bundle-licenses
     - cmake
     - ninja
+  # Nothing from the toolkit is linked: the kernel image is embedded and
+  # the driver's own library is opened at run time. The headers nvcc
+  # includes arrive with the compiler package. cuda-version stays,
+  # carrying the __cuda driver floor.
   host:
     - cuda-version ==${{ cuda_compiler_version }}
-    - cuda-cudart-dev
-    - cuda-cudart-static
-  # The runtime is linked statically, so the shared cudart is not needed at
-  # run time. cuda-version stays, carrying the __cuda driver floor.
+  # nvcc needs a host C++ compiler to preprocess the kernel, but no C++
+  # ends up in the executable, so the compiler's libstdc++ run export
+  # would be a dependency the program never loads.
   ignore_run_exports:
-    from_package:
-      - cuda-cudart-dev
+    by_name:
+      - libstdcxx
 
 tests:
   - script:

@@ -45,9 +45,10 @@ show off a GPU's SHA-1 throughput and put that extra compute to use!
 
 - An NVIDIA GPU (sm_75 / Turing or newer) and its driver.
 - To build: the CUDA toolkit (developed against CUDA 13.0), a Rust
-  toolchain (`rustup`, stable), CMake >= 3.24, Ninja, and a C++17
-  compiler. A built binary needs none of these - the CUDA runtime is
-  linked in statically, so only the driver matters at run time.
+  toolchain (`rustup`, stable), CMake >= 3.27, Ninja, and a C++17
+  compiler. A built binary needs none of these - it links no CUDA
+  library and opens the driver's own at run time, so only the driver
+  matters.
 
 ## Install
 
@@ -192,7 +193,7 @@ three.
 
 The kernel is bound by the SHA-1 round dependency chain, not occupancy
 or memory, so the throughput is flat across launch shapes - see the
-comment in `native/backend/cuda/kernel.cu`.
+comment in `src/gpu.rs`.
 
 ## Development
 
@@ -204,9 +205,9 @@ cmake --build native/build
 ctest --test-dir native/build --output-on-failure
 ```
 
-Those cover the SHA-1 vectors, the candidate encoder, and CPU-vs-GPU
-parity through the real search entry point. The Rust side adds commit
-surgery, the git plumbing wrappers, and end-to-end tests against scratch
+Those cover the SHA-1 vectors and the candidate encoder. The Rust side
+adds commit surgery, the git plumbing wrappers, host-vs-GPU parity
+through the real search path, and end-to-end tests against scratch
 repositories:
 
 ```
@@ -215,8 +216,7 @@ cargo test
 
 Tests that reach the GPU search skip themselves when
 `GIT_BREW_SKIP_GPU_TESTS` is set, which is how CI runs the suite on
-GPU-less runners; the native equivalent is `ctest -E gpu_parity`. With
-the variable unset, everything runs.
+GPU-less runners. With the variable unset, everything runs.
 
 ### Releasing
 
