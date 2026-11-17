@@ -193,16 +193,16 @@ three.
 
 The kernel is bound by the SHA-1 round dependency chain, not occupancy
 or memory, so the throughput is flat across launch shapes - see the
-comment in `src/gpu.rs`.
+comment in `src/cuda/mod.rs`.
 
 ## Development
 
-The native core carries its own test suite, runnable without cargo:
+The C++ shared with the kernel carries its own test suite, runnable without cargo:
 
 ```
-cmake -S native -B native/build -G Ninja
-cmake --build native/build
-ctest --test-dir native/build --output-on-failure
+cmake -S src/cuda -B build -G Ninja
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 Those cover the SHA-1 vectors and the candidate encoder. The Rust side

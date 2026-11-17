@@ -18,7 +18,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::gpu::SearchError;
+use crate::cuda::SearchError;
 
 /// Bits in the candidate space; mirrors the 48 pad characters.
 pub const SPACE_BITS: u32 = 48;
@@ -124,7 +124,7 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::commit;
-    use crate::gpu::Searcher;
+    use crate::cuda::Searcher;
     use crate::sha1;
 
     /// A backend for tests in which no range may be searched at all.
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn a_short_prefix_search_finds_a_verified_hit() {
-        if crate::gpu::skip_gpu_tests() {
+        if crate::cuda::skip_gpu_tests() {
             return;
         }
         let f = fixture();
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn an_impossible_target_over_a_small_range_reports_exhausted() {
-        if crate::gpu::skip_gpu_tests() {
+        if crate::cuda::skip_gpu_tests() {
             return;
         }
         let f = fixture();

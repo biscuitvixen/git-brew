@@ -9,14 +9,14 @@
 //! per candidate.
 //!
 //! The pad-character mapping (candidate bit i: 0 = space, 1 = tab at byte
-//! i) mirrors native/core/encode.hpp. The two sides are locked together by
+//! i) mirrors src/cuda/include/encode.hpp. The two sides are locked together by
 //! the end-to-end check that re-hashes the reconstructed winner before any
 //! ref is updated.
 
 use std::fmt;
 
 /// Width of the mutable whitespace run; mirrors NUM_PAD_CHARS in
-/// native/core/encode.hpp.
+/// src/cuda/include/encode.hpp.
 pub const NUM_PAD_CHARS: usize = 48;
 
 /// Upper bound (exclusive) on the constant filler run. A 128-wide window is

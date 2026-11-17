@@ -47,9 +47,9 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 # Device code only: the kernel is compiled to a fatbin, which the Rust
 # host embeds and loads through the driver API. Nothing here is linked
 # into the executable. CUDA_FATBIN_COMPILATION needs CMake 3.27.
-add_library(brew_kernel OBJECT backend/cuda/kernel.cu)
+add_library(brew_kernel OBJECT kernel.cu)
 set_property(TARGET brew_kernel PROPERTY CUDA_FATBIN_COMPILATION ON)
-target_include_directories(brew_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(brew_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # build.rs picks the image up from <out>/share.
 install(FILES $<TARGET_OBJECTS:brew_kernel> DESTINATION share RENAME kernel.fatbin)
 
@@ -57,10 +57,10 @@ include(CTest)
 
 if(BUILD_TESTING)
     add_executable(test_sha1 tests/test_sha1.cpp)
-    target_include_directories(test_sha1 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(test_sha1 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME sha1_fixtures COMMAND test_sha1)
 
     add_executable(test_encode tests/test_encode.cpp)
-    target_include_directories(test_encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(test_encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME encode_fixtures COMMAND test_encode)
 endif()

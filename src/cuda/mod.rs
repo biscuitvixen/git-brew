@@ -18,17 +18,19 @@
 //! Argument checking and mask building are pure and live in
 //! `build_params`, where they are tested without a device.
 
+mod driver;
+
 use std::ffi::{c_int, c_void, CStr};
 use std::fmt;
 use std::mem::{offset_of, size_of};
 use std::ops::Range;
 use std::ptr;
 
-use crate::commit::NUM_PAD_CHARS;
-use crate::cuda::{
+use self::driver::{
     CUcontext, CUdevice, CUdeviceptr, CUfunction, CUmodule, CudaError, Driver,
     DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
 };
+use crate::commit::NUM_PAD_CHARS;
 use crate::search::Backend;
 
 /// Prefix length limit (12 hex digits = 48 bits, the whole pad search
@@ -60,10 +62,10 @@ const FOUND_NAME: &CStr = c"d_found";
 #[repr(C, align(16))]
 struct Aligned<T: ?Sized>(T);
 
-/// The fatbin built by native/CMakeLists.txt; build.rs supplies the path.
+/// The fatbin built by CMakeLists.txt beside this file; build.rs supplies the path.
 static KERNEL_IMAGE: &Aligned<[u8]> = &Aligned(*include_bytes!(env!("GIT_BREW_KERNEL_FATBIN")));
 
-/// Mirror of SearchParams in native/backend/cuda/kernel.cu, passed to the
+/// Mirror of SearchParams in kernel.cu, passed to the
 /// kernel by value. The assertions below and the static_asserts beside
 /// the C++ definition pin the same layout from both sides.
 #[repr(C)]

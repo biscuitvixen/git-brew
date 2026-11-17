@@ -1,6 +1,6 @@
 //! Builds the CUDA kernel image via CMake and tells rustc where it is.
 //!
-//! The image is a fatbin that src/gpu.rs embeds with `include_bytes!` and
+//! The image is a fatbin that src/cuda/mod.rs embeds with `include_bytes!` and
 //! hands to the driver at run time, so nothing native is linked into the
 //! executable and no link directives are emitted here.
 //!
@@ -18,7 +18,7 @@ fn main() {
     let arch = env::var("GIT_BREW_CUDA_ARCH")
         .or_else(|_| env::var("CUDAARCHS"))
         .ok();
-    let mut config = cmake::Config::new("native");
+    let mut config = cmake::Config::new("src/cuda");
     config
         .generator("Ninja")
         .profile("Release")
@@ -45,12 +45,12 @@ fn main() {
         fatbin.display()
     );
 
-    // Watched paths name the source subdirectories individually: watching
-    // native/ itself would also watch native/build, the standalone ctest
-    // build tree, and trigger rebuild loops.
-    println!("cargo:rerun-if-changed=native/CMakeLists.txt");
-    println!("cargo:rerun-if-changed=native/core");
-    println!("cargo:rerun-if-changed=native/backend");
+    // Only the inputs to the kernel image are watched: src/cuda also
+    // holds Rust sources, which cargo tracks itself, and the host tests,
+    // which this build does not compile.
+    println!("cargo:rerun-if-changed=src/cuda/CMakeLists.txt");
+    println!("cargo:rerun-if-changed=src/cuda/kernel.cu");
+    println!("cargo:rerun-if-changed=src/cuda/include");
     println!("cargo:rerun-if-env-changed=GIT_BREW_CUDA_ARCH");
     println!("cargo:rerun-if-env-changed=CUDAARCHS");
 }

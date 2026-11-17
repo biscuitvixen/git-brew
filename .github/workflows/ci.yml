@@ -81,14 +81,14 @@ jobs:
           # The container runs as root over a workspace the runner user
           # owns, which git refuses to read without this.
           git -c safe.directory="$GITHUB_WORKSPACE" ls-files \
-            'native/*.h' 'native/*.hpp' 'native/*.cpp' 'native/*.cu' \
+            'src/cuda/*.hpp' 'src/cuda/*.cpp' 'src/cuda/*.cu' \
             | xargs clang-format --dry-run --Werror
       - name: Native tests
         # Explicit arch: the CMakeLists fallback is `native`, which needs
         # a visible GPU to detect. The kernel image still compiles here;
         # the tests themselves are host-only.
         run: |
-          cmake -S native -B native-ci -G Ninja \
+          cmake -S src/cuda -B native-ci -G Ninja \
             -DBUILD_TESTING=ON -DCMAKE_CUDA_ARCHITECTURES=75-real
           cmake --build native-ci
           ctest --test-dir native-ci --output-on-failure

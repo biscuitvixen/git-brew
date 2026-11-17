@@ -108,7 +108,7 @@ mod tests {
     }
 
     // NIST FIPS 180-4 / CAVP SHA-1 vectors, as listed in RFC 3174 section
-    // 7.3; the same fixtures as native/tests/test_sha1.cpp so the two
+    // 7.3; the same fixtures as src/cuda/tests/test_sha1.cpp so the two
     // implementations are pinned to identical references.
     #[test]
     fn nist_vectors_match() {
@@ -149,7 +149,7 @@ mod tests {
     }
 
     // The same commit fixture as the C++ tests; provenance is recorded in
-    // native/tests/test_sha1.cpp.
+    // src/cuda/tests/test_sha1.cpp.
     #[test]
     fn git_commit_oid_matches_wrapper_plus_content() {
         let content = b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\

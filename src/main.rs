@@ -9,7 +9,6 @@
 mod commit;
 mod cuda;
 mod git;
-mod gpu;
 mod search;
 mod sha1;
 
@@ -86,10 +85,10 @@ impl From<String> for ToolError {
 
 /// Lowercase and validate the prefix, one nibble value per hex digit.
 fn parse_prefix(prefix: &str) -> Result<Vec<u8>, ToolError> {
-    if prefix.is_empty() || prefix.len() > gpu::MAX_PREFIX_NIBBLES {
+    if prefix.is_empty() || prefix.len() > cuda::MAX_PREFIX_NIBBLES {
         return Err(ToolError::Usage(format!(
             "prefix '{prefix}' must be 1 to {} hex digits",
-            gpu::MAX_PREFIX_NIBBLES
+            cuda::MAX_PREFIX_NIBBLES
         )));
     }
     prefix
@@ -165,7 +164,7 @@ fn run_tool(repo: &Path, args: &Args) -> Result<(), ToolError> {
     ctrlc::set_handler(move || handler_flag.store(true, Ordering::Relaxed))
         .map_err(|e| format!("could not install the Ctrl-C handler: {e}"))?;
 
-    let mut searcher = gpu::Searcher::new().map_err(|e| e.to_string())?;
+    let mut searcher = cuda::Searcher::new().map_err(|e| e.to_string())?;
     eprintln!(
         "searching for prefix '{prefix}': ~2^{} of 2^{} candidates expected",
         4 * nibbles.len(),

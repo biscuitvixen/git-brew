@@ -12,7 +12,7 @@ use std::process::{Command, Output, Stdio};
 
 const BIN: &str = env!("CARGO_BIN_EXE_git-brew");
 
-/// Mirrors crate::gpu::skip_gpu_tests (integration tests are a separate
+/// Mirrors crate::cuda::skip_gpu_tests (integration tests are a separate
 /// crate): tests that reach the GPU search early-return when
 /// GIT_BREW_SKIP_GPU_TESTS is set. The refusal and usage-error paths
 /// never touch the device and always run.
