@@ -1,11 +1,12 @@
 //! Host-side SHA-1: midstate computation and independent verification.
 //!
-//! This deliberately duplicates the C++ core rather than calling it. The
-//! native side and git each compute the digest their own way; a winning
-//! object must satisfy this implementation, the prefix, and `git
-//! hash-object` before any ref moves, so a silent divergence in any one of
-//! the three implementations cannot corrupt a repository. Only whole-buffer
-//! and midstate hashing exist here; throughput hashing is the GPU's job.
+//! This deliberately duplicates the search backends' cores rather than
+//! calling them. The backend that found a hit and git each compute the
+//! digest their own way; a winning object must satisfy this
+//! implementation, the prefix, and `git hash-object` before any ref moves,
+//! so a silent divergence in any one of the three implementations cannot
+//! corrupt a repository. Only whole-buffer and midstate hashing exist
+//! here; throughput hashing is the backends' job.
 
 /// SHA-1 initial hash state H0..H4 (FIPS 180-4 section 5.3.1).
 pub const INIT_STATE: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];

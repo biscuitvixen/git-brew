@@ -257,3 +257,55 @@ mod tests {
         assert_eq!(args.total_len, 240, "object length from the tail");
     }
 }
+
+/// What the backends' own tests share: a prepared commit to search, a
+/// candidate stream, and the verifying side's view of a digest.
+#[cfg(test)]
+pub mod testing {
+    use crate::commit;
+    use crate::sha1;
+
+    /// A real prepared commit: its midstate, its padded tail, and the
+    /// host-side object builder the digests are checked against.
+    pub struct Fixture {
+        pub midstate: [u32; 5],
+        pub tail: [u8; 64],
+        pub padded: commit::PaddedCommit,
+    }
+
+    pub fn fixture() -> Fixture {
+        let content = b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
+            author A <a@example.com> 1700000000 +0000\n\
+            committer C <c@example.com> 1700000000 +0000\n\
+            \n\
+            Backend parity fixture\n";
+        let padded = commit::prepare(content).expect("fixture must prepare");
+        let mut midstate = sha1::INIT_STATE;
+        sha1::update_blocks(&mut midstate, padded.midstate_prefix());
+        Fixture {
+            midstate,
+            tail: padded.tail(),
+            padded,
+        }
+    }
+
+    /// Deterministic 48-bit candidate stream (Knuth MMIX LCG, high bits).
+    pub fn next_candidate(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (*state >> 16) & ((1 << 48) - 1)
+    }
+
+    /// First 12 hex digits of the host digest for `candidate`.
+    pub fn host_nibbles(f: &Fixture, candidate: u64) -> [u8; 12] {
+        let digest = sha1::digest(&f.padded.object_for(candidate));
+        std::array::from_fn(|i| {
+            if i % 2 == 0 {
+                digest[i / 2] >> 4
+            } else {
+                digest[i / 2] & 0xF
+            }
+        })
+    }
+}

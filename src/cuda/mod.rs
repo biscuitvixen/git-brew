@@ -324,8 +324,7 @@ pub(crate) fn skip_gpu_tests() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commit;
-    use crate::sha1;
+    use crate::backend::testing::{fixture, host_nibbles, next_candidate};
 
     /// A structurally valid padded final block for a 240-byte object.
     fn smoke_tail() -> [u8; 64] {
@@ -361,50 +360,6 @@ mod tests {
             hit.is_some(),
             "1-nibble search over 2^20 candidates found nothing"
         );
-    }
-
-    /// A real prepared commit: its midstate, its padded tail, and the
-    /// host-side object builder the digests are checked against.
-    struct Fixture {
-        midstate: [u32; 5],
-        tail: [u8; 64],
-        padded: commit::PaddedCommit,
-    }
-
-    fn fixture() -> Fixture {
-        let content = b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
-            author A <a@example.com> 1700000000 +0000\n\
-            committer C <c@example.com> 1700000000 +0000\n\
-            \n\
-            GPU parity fixture\n";
-        let padded = commit::prepare(content).expect("fixture must prepare");
-        let mut midstate = sha1::INIT_STATE;
-        sha1::update_blocks(&mut midstate, padded.midstate_prefix());
-        Fixture {
-            midstate,
-            tail: padded.tail(),
-            padded,
-        }
-    }
-
-    /// Deterministic 48-bit candidate stream (Knuth MMIX LCG, high bits).
-    fn next_candidate(state: &mut u64) -> u64 {
-        *state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (*state >> 16) & ((1 << 48) - 1)
-    }
-
-    /// First 12 hex digits of the host digest for `candidate`.
-    fn host_nibbles(f: &Fixture, candidate: u64) -> [u8; 12] {
-        let digest = sha1::digest(&f.padded.object_for(candidate));
-        std::array::from_fn(|i| {
-            if i % 2 == 0 {
-                digest[i / 2] >> 4
-            } else {
-                digest[i / 2] & 0xF
-            }
-        })
     }
 
     // Host-vs-device parity through the real search path. For each sampled

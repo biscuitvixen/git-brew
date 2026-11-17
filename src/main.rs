@@ -10,6 +10,9 @@ mod backend;
 mod commit;
 mod cuda;
 mod git;
+// Not yet reachable from main; the tests are its only caller.
+#[cfg_attr(not(test), expect(dead_code))]
+mod host;
 mod search;
 mod sha1;
 
