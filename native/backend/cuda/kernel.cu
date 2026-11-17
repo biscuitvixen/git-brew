@@ -14,31 +14,28 @@
  * shared memory, no cudaMalloc, and no device-side state beyond the two
  * result globals: host-device traffic per call is the parameter struct in
  * and 12 bytes out.
+ *
+ * This file holds device code only and is compiled to a fatbin rather
+ * than an object. The Rust host loads that image through the driver API
+ * and looks the kernel and the two globals up by name, so all three have
+ * C linkage; a C++ name would carry a per-file hash on Linux and MSVC
+ * decoration on Windows. SearchParams crosses the same boundary by value
+ * and is mirrored by a repr(C) struct in src/gpu.rs, with the layout
+ * pinned here by static_assert.
  */
-#include <cuda_runtime.h>
-
+#include <cstddef>
 #include <cstdint>
-#include <mutex>
 
 #include "core/encode.hpp"
 #include "core/sha1.hpp"
-#include "git_brew.h"
 
 namespace {
-
-/// Kernel launch shape, scaled off the SM count at launch. On GB10 the
-/// kernel is bound by the SHA-1 round dependency chain, not occupancy or
-/// memory: a warm sweep of threads in {128..512} x blocks-per-SM in
-/// {16..128} holds flat at 11.1-11.3 GH/s, so shape is not a throughput
-/// lever here. 256 threads is a clean warp multiple; the blocks-per-SM is
-/// set high so the adaptive driver's smaller tail chunks still cover all
-/// SMs rather than to raise steady-state rate.
-constexpr uint32_t KERNEL_THREADS = 256;
-constexpr uint32_t KERNEL_BLOCKS_PER_SM = 32;
 
 /// How many candidates a thread hashes between polls of the found flag.
 /// Bounds post-hit wasted work without measurable polling overhead.
 constexpr uint32_t kPollInterval = 256;
+
+}  // namespace
 
 struct SearchParams {
     uint32_t ms[5];      ///< SHA-1 midstate h0..h4.
@@ -51,7 +48,19 @@ struct SearchParams {
     uint64_t end;        ///< Exclusive.
 };
 
+static_assert(sizeof(SearchParams) == 64, "SearchParams size differs from src/gpu.rs");
+static_assert(offsetof(SearchParams, total_len) == 24,
+              "SearchParams::total_len offset differs from src/gpu.rs");
+static_assert(offsetof(SearchParams, target0) == 32,
+              "SearchParams::target0 offset differs from src/gpu.rs");
+static_assert(offsetof(SearchParams, start) == 48,
+              "SearchParams::start offset differs from src/gpu.rs");
+
+extern "C" {
+
+/// Winning candidate; the host resets it to ~0 before each launch.
 __device__ unsigned long long d_result;
+/// Set once a thread has claimed d_result; the host resets it to 0.
 __device__ int d_found;
 
 __global__ void vanity_kernel(SearchParams p) {
@@ -83,121 +92,4 @@ __global__ void vanity_kernel(SearchParams p) {
     }
 }
 
-/// SM count of the current device, queried once. -1 when CUDA is unusable.
-int device_sm_count() {
-    static int sm_count = [] {
-        int device = 0;
-        if (cudaGetDevice(&device) != cudaSuccess) {
-            return -1;
-        }
-        int sms = 0;
-        if (cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device)
-            != cudaSuccess) {
-            return -1;
-        }
-        return sms;
-    }();
-    return sm_count;
-}
-
-}  // namespace
-
-extern "C" int32_t vanity_search(const uint32_t midstate[5],
-                                 const uint8_t *tail,
-                                 uint32_t tail_len,
-                                 const uint8_t *target_nibbles,
-                                 uint32_t num_nibbles,
-                                 uint64_t start_candidate,
-                                 uint64_t end_candidate,
-                                 uint64_t *found_candidate) {
-    if (midstate == nullptr || tail == nullptr || target_nibbles == nullptr
-        || found_candidate == nullptr) {
-        return GV_ERR_BAD_ARGS;
-    }
-    if (num_nibbles < 1 || num_nibbles > 12) {
-        return GV_ERR_BAD_ARGS;
-    }
-    if (tail_len != 64) {
-        return GV_ERR_BAD_ARGS;
-    }
-    if (start_candidate > end_candidate || end_candidate > (uint64_t(1) << 48)) {
-        return GV_ERR_BAD_ARGS;
-    }
-    // The tail must be a well-formed padded final block whose pad region
-    // starts at byte 0; its length field defines the W14/W15 constants.
-    if (tail[gv::NUM_PAD_CHARS] != 0x80) {
-        return GV_ERR_BAD_ARGS;
-    }
-    for (int i = gv::NUM_PAD_CHARS + 1; i < 56; ++i) {
-        if (tail[i] != 0) {
-            return GV_ERR_BAD_ARGS;
-        }
-    }
-    uint64_t bit_len =
-      (uint64_t(gv::load_be32(tail + 56)) << 32) | gv::load_be32(tail + 60);
-    if (bit_len % 8 != 0 || (bit_len / 8) % 64 != uint64_t(gv::NUM_PAD_CHARS)) {
-        return GV_ERR_BAD_ARGS;
-    }
-
-    SearchParams p = {};
-    for (int i = 0; i < 5; ++i) {
-        p.ms[i] = midstate[i];
-    }
-    p.total_len = bit_len / 8;
-    for (uint32_t i = 0; i < num_nibbles; ++i) {
-        if (target_nibbles[i] > 15) {
-            return GV_ERR_BAD_ARGS;
-        }
-        uint32_t shift = 28 - 4 * (i % 8);
-        if (i < 8) {
-            p.target0 |= uint32_t(target_nibbles[i]) << shift;
-            p.mask0 |= 0xFu << shift;
-        } else {
-            p.target1 |= uint32_t(target_nibbles[i]) << shift;
-            p.mask1 |= 0xFu << shift;
-        }
-    }
-    p.start = start_candidate;
-    p.end = end_candidate;
-    if (p.start == p.end) {
-        return GV_EXHAUSTED;
-    }
-
-    int sms = device_sm_count();
-    if (sms <= 0) {
-        return GV_ERR_CUDA;
-    }
-    // d_result and d_found are process-global device state, so concurrent
-    // calls would read each other's hits; one search runs at a time.
-    static std::mutex search_mutex;
-    std::lock_guard<std::mutex> guard(search_mutex);
-    const unsigned long long sentinel = ~0ULL;
-    const int zero = 0;
-    if (cudaMemcpyToSymbol(d_result, &sentinel, sizeof sentinel) != cudaSuccess
-        || cudaMemcpyToSymbol(d_found, &zero, sizeof zero) != cudaSuccess) {
-        return GV_ERR_CUDA;
-    }
-
-    uint64_t range = p.end - p.start;
-    uint64_t blocks_needed = (range + KERNEL_THREADS - 1) / KERNEL_THREADS;
-    uint32_t blocks = uint32_t(sms) * KERNEL_BLOCKS_PER_SM;
-    if (blocks_needed < blocks) {
-        blocks = uint32_t(blocks_needed);
-    }
-    vanity_kernel<<<blocks, KERNEL_THREADS>>>(p);
-    if (cudaDeviceSynchronize() != cudaSuccess || cudaGetLastError() != cudaSuccess) {
-        return GV_ERR_CUDA;
-    }
-
-    unsigned long long result = 0;
-    int found = 0;
-    if (cudaMemcpyFromSymbol(&result, d_result, sizeof result) != cudaSuccess
-        || cudaMemcpyFromSymbol(&found, d_found, sizeof found) != cudaSuccess) {
-        return GV_ERR_CUDA;
-    }
-    if (found != 0 && result != sentinel) {
-        *found_candidate = uint64_t(result);
-        return GV_FOUND;
-    }
-    return GV_EXHAUSTED;
-}
+}  // extern "C"

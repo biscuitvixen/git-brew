@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.27)
 project(git_brew_native LANGUAGES CXX CUDA)
 
 # The shipped list is real SASS for every architecture the toolkit can
@@ -43,25 +43,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-# The static library links into a position-independent Rust executable.
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_library(brew_native STATIC backend/cuda/kernel.cu)
-target_include_directories(
-    brew_native
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# The cmake crate on the Rust side picks the library up from <out>/lib.
-install(TARGETS brew_native ARCHIVE DESTINATION lib)
-
-# build.rs links the CUDA runtime itself and reads its location from
-# <out>/share, so the runtime always matches the toolkit that compiled the
-# kernel. FindCUDAToolkit resolves against the enabled CUDA compiler.
-find_package(CUDAToolkit REQUIRED)
-file(GENERATE
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cudart_static_path
-    CONTENT "$<TARGET_FILE:CUDA::cudart_static>")
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cudart_static_path DESTINATION share)
+# Device code only: the kernel is compiled to a fatbin, which the Rust
+# host embeds and loads through the driver API. Nothing here is linked
+# into the executable. CUDA_FATBIN_COMPILATION needs CMake 3.27.
+add_library(brew_kernel OBJECT backend/cuda/kernel.cu)
+set_property(TARGET brew_kernel PROPERTY CUDA_FATBIN_COMPILATION ON)
+target_include_directories(brew_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# build.rs picks the image up from <out>/share.
+install(FILES $<TARGET_OBJECTS:brew_kernel> DESTINATION share RENAME kernel.fatbin)
 
 include(CTest)
 
@@ -73,9 +63,4 @@ if(BUILD_TESTING)
     add_executable(test_encode tests/test_encode.cpp)
     target_include_directories(test_encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME encode_fixtures COMMAND test_encode)
-
-    add_executable(test_parity tests/test_parity.cu)
-    target_include_directories(test_parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(test_parity PRIVATE brew_native)
-    add_test(NAME gpu_parity COMMAND test_parity)
 endif()
