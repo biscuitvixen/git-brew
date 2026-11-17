@@ -43,7 +43,9 @@ show off a GPU's SHA-1 throughput and put that extra compute to use!
 
 ## Requirements
 
-- An NVIDIA GPU (sm_75 / Turing or newer) and its driver.
+- An NVIDIA GPU (sm_75 / Turing or newer) and its driver. Without
+  one the search runs on the CPU, which is fine up to 7 or 8 digits;
+  see [How fast](#how-fast).
 - To build: the CUDA toolkit (developed against CUDA 13.0), a Rust
   toolchain (`rustup`, stable), CMake >= 3.27, Ninja, and a C++17
   compiler. A built binary needs none of these - it links no CUDA
@@ -94,7 +96,7 @@ GIT_BREW_CUDA_ARCH=121 cargo build --release   # e.g. GB10 only
 ## Usage
 
 ```
-git brew [--dry-run] [--force] [<prefix>]
+git brew [--cpu] [--dry-run] [--force] [<prefix>]
 ```
 
 - `<prefix>` is 1 to 12 hex digits, case-insensitive. Omit it and the
@@ -105,6 +107,9 @@ git brew [--dry-run] [--force] [<prefix>]
   git config brew.prefix c0ffee
   ```
 
+- `--cpu` searches on the CPU even when a GPU is usable. Without the
+  flag the CPU is still the fallback: if the driver or a device is
+  missing, the tool says so and carries on there.
 - `--dry-run` searches and verifies, prints the hash it would produce,
   and writes nothing.
 - `--force` amends even when `HEAD` is already on a remote-tracking
@@ -171,7 +176,8 @@ c0ffee4ffc212a7760b30c407c87ad2ce16807c8 -> c0ffeebadf60ed0751fa40c1f18e86d9b2d5
 Nothing is written until the winning object has been re-hashed by the
 tool's own SHA-1, matched against the prefix, and confirmed identical
 to what `git hash-object` computes. The GPU is a search oracle and
-nothing it returns is trusted without reverification.
+nothing it returns is trusted without reverification; the same holds
+for the CPU search.
 
 ## How fast
 
@@ -191,13 +197,20 @@ length (2^(4n) candidates for n hex digits):
 the expected work, so a single sweep finds it only about two times in
 three.
 
+The CPU search is plain multi-threaded Rust and makes no use of the
+SHA-1 instructions yet. The same machine's 20 cores (ten Cortex-X925,
+ten Cortex-A725) manage ~145 MH/s between them, about 77 times slower:
+7 hex digits take around two seconds and 8 around half a minute, and
+10 would take two hours.
+
 The kernel is bound by the SHA-1 round dependency chain, not occupancy
 or memory, so the throughput is flat across launch shapes - see the
 comment in `src/cuda/mod.rs`.
 
 ## Development
 
-The C++ shared with the kernel carries its own test suite, runnable without cargo:
+The C++ shared with the kernel carries its own test suite, runnable
+without cargo:
 
 ```
 cmake -S src/cuda -B build -G Ninja
@@ -216,7 +229,8 @@ cargo test
 
 Tests that reach the GPU search skip themselves when
 `GIT_BREW_SKIP_GPU_TESTS` is set, which is how CI runs the suite on
-GPU-less runners. With the variable unset, everything runs.
+GPU-less runners. With the variable unset, everything runs. The CPU
+search and the search loop are tested either way.
 
 ### Releasing
 

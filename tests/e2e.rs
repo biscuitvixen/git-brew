@@ -4,7 +4,7 @@
 //! CARGO_BIN_EXE_git-brew) so argument parsing, the refusal paths, the
 //! GPU search, and the ref update are all exercised exactly as a user
 //! would hit them. Prefixes are kept to two hex digits: a 2^8 expected
-//! search is milliseconds even on the CPU-side overhead alone.
+//! search is milliseconds on either backend.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -62,8 +62,13 @@ fn commit(dir: &Path, message: &str) {
 }
 
 fn run_tool(dir: &Path, args: &[&str]) -> Output {
+    run_tool_with_env(dir, args, &[])
+}
+
+fn run_tool_with_env(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     Command::new(BIN)
         .args(args)
+        .envs(env.iter().copied())
         .current_dir(dir)
         .stdin(Stdio::null())
         .output()
@@ -108,6 +113,52 @@ fn a_two_digit_prefix_lands_on_head_and_the_repo_stays_healthy() {
         message.trim_end(),
         "End-to-end fixture commit",
         "the visible message must be unchanged"
+    );
+}
+
+// The whole flow on the CPU backend, which needs no driver and so runs
+// everywhere, CI included: search, reverification and the ref update.
+#[test]
+fn the_cpu_flag_lands_a_prefix_without_a_gpu() {
+    let repo = scratch_repo("cpu-flag");
+    let output = run_tool(&repo, &["--cpu", "4d"]);
+    assert!(
+        output.status.success(),
+        "tool failed: {}",
+        stderr_of(&output)
+    );
+    let after = git(&repo, &["rev-parse", "HEAD"]);
+    assert!(
+        after.starts_with("4d"),
+        "HEAD {after} does not start with the prefix"
+    );
+    assert!(
+        !stderr_of(&output).contains("no usable GPU"),
+        "--cpu is a choice, not a fallback, and must not be announced as one"
+    );
+}
+
+// A machine with no usable GPU must still do the job, and say that it
+// changed backend. An empty CUDA_VISIBLE_DEVICES hides every device from
+// the driver; a machine with no driver at all takes the same path.
+#[test]
+fn a_missing_gpu_falls_back_to_the_cpu_and_says_so() {
+    let repo = scratch_repo("fallback");
+    let output = run_tool_with_env(&repo, &["5e"], &[("CUDA_VISIBLE_DEVICES", "")]);
+    assert!(
+        output.status.success(),
+        "tool failed: {}",
+        stderr_of(&output)
+    );
+    let after = git(&repo, &["rev-parse", "HEAD"]);
+    assert!(
+        after.starts_with("5e"),
+        "HEAD {after} does not start with the prefix"
+    );
+    assert!(
+        stderr_of(&output).contains("searching on the CPU instead"),
+        "the fallback was not announced: {}",
+        stderr_of(&output)
     );
 }
 
