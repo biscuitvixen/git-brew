@@ -104,9 +104,8 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commit;
-    use crate::cuda::Searcher;
-    use crate::sha1;
+    use crate::backend::testing::{fixture, host_nibbles};
+    use crate::host::HostSearcher;
 
     /// A backend for tests in which no range may be searched at all.
     struct NeverCalled;
@@ -123,47 +122,13 @@ mod tests {
         }
     }
 
-    struct Fixture {
-        midstate: [u32; 5],
-        tail: [u8; 64],
-        padded: commit::PaddedCommit,
-    }
-
-    fn fixture() -> Fixture {
-        let content = b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
-            author Test Author <author@example.com> 1700000000 +0000\n\
-            committer Test Committer <committer@example.com> 1700000000 +0000\n\
-            \n\
-            Search driver fixture\n";
-        let padded = commit::prepare(content).expect("fixture must prepare");
-        let mut midstate = sha1::INIT_STATE;
-        sha1::update_blocks(&mut midstate, padded.midstate_prefix());
-        Fixture {
-            midstate,
-            tail: padded.tail(),
-            padded,
-        }
-    }
-
-    fn digest_nibbles(digest: &[u8; 20], n: usize) -> Vec<u8> {
-        (0..n)
-            .map(|i| {
-                if i % 2 == 0 {
-                    digest[i / 2] >> 4
-                } else {
-                    digest[i / 2] & 0xF
-                }
-            })
-            .collect()
-    }
-
+    // The ordinary successful run: a hit in the first chunk ends the
+    // search, and the candidate handed back is one the verifying SHA-1
+    // accepts.
     #[test]
     fn a_short_prefix_search_finds_a_verified_hit() {
-        if crate::cuda::skip_gpu_tests() {
-            return;
-        }
         let f = fixture();
-        let mut searcher = Searcher::new().expect("device must initialise");
+        let mut searcher = HostSearcher::new();
         let interrupt = AtomicBool::new(false);
         let mut updates = 0u32;
         let outcome = run(
@@ -179,24 +144,25 @@ mod tests {
         let Outcome::Found(candidate) = outcome else {
             panic!("1-nibble search must find a hit, got {outcome:?}");
         };
-        let digest = sha1::digest(&f.padded.object_for(candidate));
-        assert_eq!(digest[0] >> 4, 0xB, "hit must verify on the host SHA-1");
+        assert_eq!(
+            host_nibbles(&f, candidate)[0],
+            0xB,
+            "hit must verify on the host SHA-1"
+        );
     }
 
+    // A range with nothing to find must end as Exhausted, with the last
+    // progress report covering the whole range.
     #[test]
     fn an_impossible_target_over_a_small_range_reports_exhausted() {
-        if crate::cuda::skip_gpu_tests() {
-            return;
-        }
         let f = fixture();
         // A 12-nibble target taken from a candidate outside the range: a
         // collision inside it is a ~2^-38 event.
         let outside = 1_000_000u64;
-        let digest = sha1::digest(&f.padded.object_for(outside));
-        let target = digest_nibbles(&digest, 12);
+        let target = host_nibbles(&f, outside);
         let interrupt = AtomicBool::new(false);
         let mut last_done = 0u64;
-        let mut searcher = Searcher::new().expect("device must initialise");
+        let mut searcher = HostSearcher::new();
         let outcome = run(
             &mut searcher,
             &f.midstate,
@@ -214,6 +180,8 @@ mod tests {
         assert_eq!(last_done, 1024, "progress must end at the range size");
     }
 
+    // Ctrl-C before the first chunk: the backend must not be asked to
+    // search anything.
     #[test]
     fn a_raised_interrupt_flag_stops_before_any_chunk_runs() {
         let f = fixture();

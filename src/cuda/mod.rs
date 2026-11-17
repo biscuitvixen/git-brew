@@ -325,6 +325,7 @@ pub(crate) fn skip_gpu_tests() -> bool {
 mod tests {
     use super::*;
     use crate::backend::testing::{fixture, host_nibbles, next_candidate};
+    use crate::host::HostSearcher;
 
     /// A structurally valid padded final block for a 240-byte object.
     fn smoke_tail() -> [u8; 64] {
@@ -443,5 +444,58 @@ mod tests {
                 "GPU hit {hit:#x} does not verify on the host"
             );
         }
+    }
+
+    // The two backends against each other on ranges where a hit is
+    // neither certain nor absent: a 4-digit target over 2^16 candidates
+    // has one match on average and none about a third of the time. The
+    // GPU may return any match and the host returns the lowest, so the
+    // comparison is whether each found one, and whether the host accepts
+    // the GPU's candidate when searching that candidate alone.
+    #[test]
+    fn the_gpu_and_the_host_agree_on_which_ranges_hold_a_match() {
+        if skip_gpu_tests() {
+            return;
+        }
+        let f = fixture();
+        let mut gpu = Searcher::new().expect("device must initialise");
+        let mut host = HostSearcher::new();
+        let mut rng = 20261117u64;
+        let (mut with_match, mut without) = (0, 0);
+        for trial in 0..64 {
+            let start = next_candidate(&mut rng) >> 1;
+            let range = start..start + (1 << 16);
+            let target: [u8; 4] = std::array::from_fn(|_| (next_candidate(&mut rng) & 0xF) as u8);
+            let gpu_hit = gpu
+                .search_range(&f.midstate, &f.tail, &target, range.clone())
+                .expect("GPU search must not error");
+            let host_hit = host
+                .search_range(&f.midstate, &f.tail, &target, range)
+                .expect("host search must not error");
+            assert_eq!(
+                gpu_hit.is_some(),
+                host_hit.is_some(),
+                "trial {trial}: GPU found {gpu_hit:?}, host found {host_hit:?}"
+            );
+            if let Some(candidate) = gpu_hit {
+                let confirmed = host
+                    .search_range(&f.midstate, &f.tail, &target, candidate..candidate + 1)
+                    .expect("host search must not error");
+                assert_eq!(
+                    confirmed,
+                    Some(candidate),
+                    "trial {trial}: the host rejects the GPU's candidate"
+                );
+                with_match += 1;
+            } else {
+                without += 1;
+            }
+        }
+        // Both outcomes must have been exercised for the test to mean
+        // anything; the seed is fixed, so this cannot flake.
+        assert!(
+            with_match > 0 && without > 0,
+            "{with_match} ranges with a match and {without} without"
+        );
     }
 }
