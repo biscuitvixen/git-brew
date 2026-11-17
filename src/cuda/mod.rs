@@ -15,25 +15,23 @@
 //! threads; that matters because the context is current only on the
 //! thread that made it.
 //!
-//! Argument checking and mask building are pure and live in
-//! `build_params`, where they are tested without a device.
+//! Argument checking and mask building are shared with the other
+//! backends and live in `crate::backend`.
+
+mod driver;
+
+pub use self::driver::CudaError;
 
 use std::ffi::{c_int, c_void, CStr};
-use std::fmt;
 use std::mem::{offset_of, size_of};
 use std::ops::Range;
 use std::ptr;
 
-use crate::commit::NUM_PAD_CHARS;
-use crate::cuda::{
-    CUcontext, CUdevice, CUdeviceptr, CUfunction, CUmodule, CudaError, Driver,
+use self::driver::{
+    CUcontext, CUdevice, CUdeviceptr, CUfunction, CUmodule, Driver,
     DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
 };
-use crate::search::Backend;
-
-/// Prefix length limit (12 hex digits = 48 bits, the whole pad search
-/// space).
-pub const MAX_PREFIX_NIBBLES: usize = 12;
+use crate::backend::{Backend, SearchArgs, SearchError};
 
 /// Kernel launch shape, scaled off the SM count at launch. On GB10 the
 /// kernel is bound by the SHA-1 round dependency chain, not occupancy or
@@ -44,6 +42,10 @@ pub const MAX_PREFIX_NIBBLES: usize = 12;
 /// SMs rather than to raise steady-state rate.
 const KERNEL_THREADS: u32 = 256;
 const KERNEL_BLOCKS_PER_SM: u32 = 32;
+
+/// First range the search loop asks for. 2^28 is small enough that even
+/// a slow GPU answers in well under a second.
+const START_CHUNK: u64 = 1 << 28;
 
 /// Value of d_result while no thread has claimed a hit.
 const NO_RESULT: u64 = u64::MAX;
@@ -60,14 +62,14 @@ const FOUND_NAME: &CStr = c"d_found";
 #[repr(C, align(16))]
 struct Aligned<T: ?Sized>(T);
 
-/// The fatbin built by native/CMakeLists.txt; build.rs supplies the path.
+/// The fatbin built by CMakeLists.txt beside this file; build.rs supplies the path.
 static KERNEL_IMAGE: &Aligned<[u8]> = &Aligned(*include_bytes!(env!("GIT_BREW_KERNEL_FATBIN")));
 
-/// Mirror of SearchParams in native/backend/cuda/kernel.cu, passed to the
+/// Mirror of SearchParams in kernel.cu, passed to the
 /// kernel by value. The assertions below and the static_asserts beside
 /// the C++ definition pin the same layout from both sides.
 #[repr(C)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 struct SearchParams {
     /// SHA-1 midstate h0..h4.
     ms: [u32; 5],
@@ -91,89 +93,6 @@ const _: () = assert!(size_of::<SearchParams>() == 64);
 const _: () = assert!(offset_of!(SearchParams, total_len) == 24);
 const _: () = assert!(offset_of!(SearchParams, target0) == 32);
 const _: () = assert!(offset_of!(SearchParams, start) == 48);
-
-#[derive(Debug)]
-pub enum SearchError {
-    /// The driver is missing or one of its calls failed: no device,
-    /// driver too old for the kernel image, launch failure.
-    Cuda(CudaError),
-    /// The caller passed arguments the search cannot run on; a bug in
-    /// this crate, not a user error.
-    BadArgs(&'static str),
-}
-
-impl fmt::Display for SearchError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SearchError::Cuda(e) => write!(f, "{e}"),
-            SearchError::BadArgs(why) => write!(f, "internal error: bad search arguments: {why}"),
-        }
-    }
-}
-
-impl std::error::Error for SearchError {}
-
-impl From<CudaError> for SearchError {
-    fn from(e: CudaError) -> Self {
-        SearchError::Cuda(e)
-    }
-}
-
-/// Check the search arguments and fold them into the kernel's parameters.
-///
-/// `tail` must be a well-formed padded final block whose pad region
-/// starts at byte 0: byte 48 is 0x80, bytes 49-55 are zero, and bytes
-/// 56-63 hold the big-endian total bit length, which defines the kernel's
-/// W14/W15 constants.
-fn build_params(
-    midstate: &[u32; 5],
-    tail: &[u8; 64],
-    prefix_nibbles: &[u8],
-    range: &Range<u64>,
-) -> Result<SearchParams, SearchError> {
-    if prefix_nibbles.is_empty() || prefix_nibbles.len() > MAX_PREFIX_NIBBLES {
-        return Err(SearchError::BadArgs("prefix length outside 1..=12"));
-    }
-    if range.start > range.end || range.end > 1 << 48 {
-        return Err(SearchError::BadArgs("candidate range outside 48 bits"));
-    }
-    if tail[NUM_PAD_CHARS] != 0x80 {
-        return Err(SearchError::BadArgs("tail has no 0x80 padding marker"));
-    }
-    if tail[NUM_PAD_CHARS + 1..56].iter().any(|&b| b != 0) {
-        return Err(SearchError::BadArgs("tail padding is not zero"));
-    }
-    let bit_len = u64::from_be_bytes(tail[56..].try_into().expect("8-byte length field"));
-    if bit_len % 8 != 0 || (bit_len / 8) % 64 != NUM_PAD_CHARS as u64 {
-        return Err(SearchError::BadArgs(
-            "tail length field does not end on the pad block",
-        ));
-    }
-
-    let mut p = SearchParams {
-        ms: *midstate,
-        total_len: bit_len / 8,
-        start: range.start,
-        end: range.end,
-        ..SearchParams::default()
-    };
-    // Nibbles 0-7 land in digest word0 and 8-11 in word1, most
-    // significant first.
-    for (i, &nibble) in prefix_nibbles.iter().enumerate() {
-        if nibble > 15 {
-            return Err(SearchError::BadArgs("prefix digit above 15"));
-        }
-        let shift = 28 - 4 * (i as u32 % 8);
-        if i < 8 {
-            p.target0 |= u32::from(nibble) << shift;
-            p.mask0 |= 0xF << shift;
-        } else {
-            p.target1 |= u32::from(nibble) << shift;
-            p.mask1 |= 0xF << shift;
-        }
-    }
-    Ok(p)
-}
 
 /// A device ready to run searches. See the module docs for what it owns.
 pub struct Searcher {
@@ -282,7 +201,17 @@ impl Backend for Searcher {
         prefix_nibbles: &[u8],
         range: Range<u64>,
     ) -> Result<Option<u64>, SearchError> {
-        let mut params = build_params(midstate, tail, prefix_nibbles, &range)?;
+        let args = SearchArgs::check(tail, prefix_nibbles, &range)?;
+        let mut params = SearchParams {
+            ms: *midstate,
+            total_len: args.total_len,
+            target0: args.target.target0,
+            mask0: args.target.mask0,
+            target1: args.target.target1,
+            mask1: args.target.mask1,
+            start: range.start,
+            end: range.end,
+        };
         if range.is_empty() {
             return Ok(None);
         }
@@ -367,6 +296,10 @@ impl Backend for Searcher {
         }
         Ok((found != 0 && result != NO_RESULT).then_some(result))
     }
+
+    fn start_chunk(&self) -> u64 {
+        START_CHUNK
+    }
 }
 
 impl Drop for Searcher {
@@ -399,8 +332,8 @@ pub(crate) fn skip_gpu_tests() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commit;
-    use crate::sha1;
+    use crate::backend::testing::{fixture, host_nibbles, next_candidate};
+    use crate::host::HostSearcher;
 
     /// A structurally valid padded final block for a 240-byte object.
     fn smoke_tail() -> [u8; 64] {
@@ -436,153 +369,6 @@ mod tests {
             hit.is_some(),
             "1-nibble search over 2^20 candidates found nothing"
         );
-    }
-
-    // Each case is a caller bug that would make the kernel hash garbage
-    // or run off the candidate space, so none may reach a launch.
-    #[test]
-    fn each_malformed_argument_is_rejected_before_any_launch() {
-        let midstate = [0u32; 5];
-        let good_tail = smoke_tail();
-        let mut no_marker = good_tail;
-        no_marker[48] = 0;
-        let mut dirty_padding = good_tail;
-        dirty_padding[50] = 1;
-        let mut misaligned_length = good_tail;
-        misaligned_length[56..].copy_from_slice(&(241u64 * 8).to_be_bytes());
-
-        // The range is two numbers so a reversed one can be written down.
-        struct Case<'a> {
-            name: &'static str,
-            tail: &'a [u8; 64],
-            nibbles: &'a [u8],
-            start: u64,
-            end: u64,
-        }
-        let cases = [
-            Case {
-                name: "zero nibbles",
-                tail: &good_tail,
-                nibbles: &[],
-                start: 0,
-                end: 10,
-            },
-            Case {
-                name: "13 nibbles",
-                tail: &good_tail,
-                nibbles: &[0; 13],
-                start: 0,
-                end: 10,
-            },
-            Case {
-                name: "nibble value 16",
-                tail: &good_tail,
-                nibbles: &[16],
-                start: 0,
-                end: 10,
-            },
-            Case {
-                name: "reversed range",
-                tail: &good_tail,
-                nibbles: &[0],
-                start: 10,
-                end: 5,
-            },
-            Case {
-                name: "range past 2^48",
-                tail: &good_tail,
-                nibbles: &[0],
-                start: 0,
-                end: (1 << 48) + 1,
-            },
-            Case {
-                name: "tail without 0x80 marker",
-                tail: &no_marker,
-                nibbles: &[0],
-                start: 0,
-                end: 10,
-            },
-            Case {
-                name: "tail with non-zero padding",
-                tail: &dirty_padding,
-                nibbles: &[0],
-                start: 0,
-                end: 10,
-            },
-            Case {
-                name: "tail length off the pad block",
-                tail: &misaligned_length,
-                nibbles: &[0],
-                start: 0,
-                end: 10,
-            },
-        ];
-        for case in cases {
-            let outcome = build_params(&midstate, case.tail, case.nibbles, &(case.start..case.end));
-            assert!(
-                matches!(outcome, Err(SearchError::BadArgs(_))),
-                "{}: expected BadArgs, got {outcome:?}",
-                case.name
-            );
-        }
-    }
-
-    // The masks decide which digest bits the kernel compares; a 9-nibble
-    // prefix is the shortest that spills into word1.
-    #[test]
-    fn a_nine_nibble_prefix_fills_word0_and_the_top_of_word1() {
-        let nibbles = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9];
-        let p = build_params(&[0u32; 5], &smoke_tail(), &nibbles, &(0..10))
-            .expect("well-formed arguments must be accepted");
-        assert_eq!(p.target0, 0x1234_5678, "word0 target");
-        assert_eq!(p.mask0, 0xFFFF_FFFF, "word0 mask");
-        assert_eq!(p.target1, 0x9000_0000, "word1 target");
-        assert_eq!(p.mask1, 0xF000_0000, "word1 mask");
-        assert_eq!(p.total_len, 240, "object length from the tail");
-    }
-
-    /// A real prepared commit: its midstate, its padded tail, and the
-    /// host-side object builder the digests are checked against.
-    struct Fixture {
-        midstate: [u32; 5],
-        tail: [u8; 64],
-        padded: commit::PaddedCommit,
-    }
-
-    fn fixture() -> Fixture {
-        let content = b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
-            author A <a@example.com> 1700000000 +0000\n\
-            committer C <c@example.com> 1700000000 +0000\n\
-            \n\
-            GPU parity fixture\n";
-        let padded = commit::prepare(content).expect("fixture must prepare");
-        let mut midstate = sha1::INIT_STATE;
-        sha1::update_blocks(&mut midstate, padded.midstate_prefix());
-        Fixture {
-            midstate,
-            tail: padded.tail(),
-            padded,
-        }
-    }
-
-    /// Deterministic 48-bit candidate stream (Knuth MMIX LCG, high bits).
-    fn next_candidate(state: &mut u64) -> u64 {
-        *state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (*state >> 16) & ((1 << 48) - 1)
-    }
-
-    /// First 12 hex digits of the host digest for `candidate`.
-    fn host_nibbles(f: &Fixture, candidate: u64) -> [u8; 12] {
-        let digest = sha1::digest(&f.padded.object_for(candidate));
-        std::array::from_fn(|i| {
-            if i % 2 == 0 {
-                digest[i / 2] >> 4
-            } else {
-                digest[i / 2] & 0xF
-            }
-        })
     }
 
     // Host-vs-device parity through the real search path. For each sampled
@@ -666,5 +452,58 @@ mod tests {
                 "GPU hit {hit:#x} does not verify on the host"
             );
         }
+    }
+
+    // The two backends against each other on ranges where a hit is
+    // neither certain nor absent: a 4-digit target over 2^16 candidates
+    // has one match on average and none about a third of the time. The
+    // GPU may return any match and the host returns the lowest, so the
+    // comparison is whether each found one, and whether the host accepts
+    // the GPU's candidate when searching that candidate alone.
+    #[test]
+    fn the_gpu_and_the_host_agree_on_which_ranges_hold_a_match() {
+        if skip_gpu_tests() {
+            return;
+        }
+        let f = fixture();
+        let mut gpu = Searcher::new().expect("device must initialise");
+        let mut host = HostSearcher::new();
+        let mut rng = 20261117u64;
+        let (mut with_match, mut without) = (0, 0);
+        for trial in 0..64 {
+            let start = next_candidate(&mut rng) >> 1;
+            let range = start..start + (1 << 16);
+            let target: [u8; 4] = std::array::from_fn(|_| (next_candidate(&mut rng) & 0xF) as u8);
+            let gpu_hit = gpu
+                .search_range(&f.midstate, &f.tail, &target, range.clone())
+                .expect("GPU search must not error");
+            let host_hit = host
+                .search_range(&f.midstate, &f.tail, &target, range)
+                .expect("host search must not error");
+            assert_eq!(
+                gpu_hit.is_some(),
+                host_hit.is_some(),
+                "trial {trial}: GPU found {gpu_hit:?}, host found {host_hit:?}"
+            );
+            if let Some(candidate) = gpu_hit {
+                let confirmed = host
+                    .search_range(&f.midstate, &f.tail, &target, candidate..candidate + 1)
+                    .expect("host search must not error");
+                assert_eq!(
+                    confirmed,
+                    Some(candidate),
+                    "trial {trial}: the host rejects the GPU's candidate"
+                );
+                with_match += 1;
+            } else {
+                without += 1;
+            }
+        }
+        // Both outcomes must have been exercised for the test to mean
+        // anything; the seed is fixed, so this cannot flake.
+        assert!(
+            with_match > 0 && without > 0,
+            "{with_match} ranges with a match and {without} without"
+        );
     }
 }

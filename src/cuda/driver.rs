@@ -14,7 +14,7 @@
 //! names here are the exported ones.
 //!
 //! This module is the function table and the error type, nothing more.
-//! Context and module ownership, and every safe wrapper, live in gpu.rs.
+//! Context and module ownership, and every safe wrapper, live in the parent module.
 
 use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
 use std::fmt;

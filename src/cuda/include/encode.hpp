@@ -19,7 +19,7 @@
 
 #include <cstdint>
 
-#include "core/sha1.hpp"
+#include "sha1.hpp"
 
 namespace gv {
 

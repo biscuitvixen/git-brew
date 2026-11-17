@@ -3,13 +3,14 @@
 //! The flow is deliberately paranoid: the commit object must round-trip
 //! through the host SHA-1 before any surgery, and the winning object must
 //! hash to the same oid under the host SHA-1 and under `git hash-object`
-//! before HEAD moves. The GPU is only ever a search oracle; nothing it
-//! returns is trusted without reverification.
+//! before HEAD moves. The search backend, GPU or CPU, is only ever a
+//! search oracle; nothing it returns is trusted without reverification.
 
+mod backend;
 mod commit;
 mod cuda;
 mod git;
-mod gpu;
+mod host;
 mod search;
 mod sha1;
 
@@ -18,14 +19,21 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::backend::Backend;
+use crate::host::HostSearcher;
+
 const USAGE: &str = "\
-usage: git-brew [--dry-run] [--force] [<prefix>]
+usage: git-brew [--cpu] [--dry-run] [--force] [<prefix>]
 
 Rewrite HEAD so its hash starts with <prefix> (1-12 hex digits), by
 appending invisible whitespace to the commit message. Reads the prefix
 from `git config brew.prefix` when the argument is omitted.
 
+The search runs on an NVIDIA GPU when one is usable, and on the CPU
+otherwise.
+
 options:
+  --cpu       search on the CPU even when a GPU is usable; far slower
   --dry-run   search and verify, print the would-be hash, write nothing
   --force     amend even when HEAD is already on a remote-tracking ref
   --help      show this text
@@ -33,6 +41,7 @@ options:
 
 struct Args {
     prefix: Option<String>,
+    cpu: bool,
     dry_run: bool,
     force: bool,
 }
@@ -46,11 +55,13 @@ enum ArgsOutcome {
 fn parse_args(argv: impl Iterator<Item = String>) -> Result<ArgsOutcome, String> {
     let mut args = Args {
         prefix: None,
+        cpu: false,
         dry_run: false,
         force: false,
     };
     for arg in argv {
         match arg.as_str() {
+            "--cpu" => args.cpu = true,
             "--dry-run" => args.dry_run = true,
             "--force" => args.force = true,
             "--help" | "-h" => {
@@ -86,10 +97,10 @@ impl From<String> for ToolError {
 
 /// Lowercase and validate the prefix, one nibble value per hex digit.
 fn parse_prefix(prefix: &str) -> Result<Vec<u8>, ToolError> {
-    if prefix.is_empty() || prefix.len() > gpu::MAX_PREFIX_NIBBLES {
+    if prefix.is_empty() || prefix.len() > backend::MAX_PREFIX_NIBBLES {
         return Err(ToolError::Usage(format!(
             "prefix '{prefix}' must be 1 to {} hex digits",
-            gpu::MAX_PREFIX_NIBBLES
+            backend::MAX_PREFIX_NIBBLES
         )));
     }
     prefix
@@ -100,6 +111,33 @@ fn parse_prefix(prefix: &str) -> Result<Vec<u8>, ToolError> {
             })
         })
         .collect()
+}
+
+/// Pick where the search runs: the GPU unless `--cpu` was given, and
+/// the CPU when the GPU cannot be brought up. The fallback is announced
+/// with the reason, as the CPU is slower by about two orders of
+/// magnitude and a long prefix that was minutes becomes days.
+fn choose_backend(force_cpu: bool) -> Box<dyn Backend> {
+    if force_cpu {
+        return Box::new(HostSearcher::new());
+    }
+    match cuda::Searcher::new() {
+        Ok(searcher) => Box::new(searcher),
+        Err(e) => {
+            eprintln!("git-brew: no usable GPU ({e}); searching on the CPU instead");
+            Box::new(HostSearcher::new())
+        }
+    }
+}
+
+/// A hash rate with the unit that keeps it readable: GH/s from one
+/// billion a second, MH/s below.
+fn format_rate(hashes_per_second: f64) -> String {
+    if hashes_per_second >= 1e9 {
+        format!("{:>7.2} GH/s", hashes_per_second / 1e9)
+    } else {
+        format!("{:>7.2} MH/s", hashes_per_second / 1e6)
+    }
 }
 
 fn run_tool(repo: &Path, args: &Args) -> Result<(), ToolError> {
@@ -165,14 +203,14 @@ fn run_tool(repo: &Path, args: &Args) -> Result<(), ToolError> {
     ctrlc::set_handler(move || handler_flag.store(true, Ordering::Relaxed))
         .map_err(|e| format!("could not install the Ctrl-C handler: {e}"))?;
 
-    let mut searcher = gpu::Searcher::new().map_err(|e| e.to_string())?;
+    let mut backend = choose_backend(args.cpu);
     eprintln!(
         "searching for prefix '{prefix}': ~2^{} of 2^{} candidates expected",
         4 * nibbles.len(),
         search::SPACE_BITS
     );
     let outcome = search::run(
-        &mut searcher,
+        backend.as_mut(),
         &midstate,
         &tail,
         &nibbles,
@@ -180,8 +218,8 @@ fn run_tool(repo: &Path, args: &Args) -> Result<(), ToolError> {
         &interrupt,
         &mut |p| {
             eprint!(
-                "\r{:>7.2} GH/s  {:>6.2}% swept  {:>5.0} s elapsed ",
-                p.rate / 1e9,
+                "\r{}  {:>6.2}% swept  {:>5.0} s elapsed ",
+                format_rate(p.rate),
                 p.done as f64 / p.total as f64 * 100.0,
                 p.elapsed.as_secs_f64()
             );
@@ -207,7 +245,7 @@ fn run_tool(repo: &Path, args: &Args) -> Result<(), ToolError> {
     let new_oid = sha1::to_hex(&sha1::digest(&new_object));
     if !new_oid.starts_with(&prefix) {
         return Err(format!(
-            "internal error: GPU candidate {candidate:#x} hashes to {new_oid}, \
+            "internal error: candidate {candidate:#x} hashes to {new_oid}, \
              which does not start with '{prefix}'"
         )
         .into());
@@ -255,5 +293,21 @@ fn main() -> ExitCode {
             eprintln!("git-brew: {msg}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The progress line must stay readable on both backends: the GPU
+    // runs at several GH/s and the CPU at a hundredth of that, which
+    // two decimals of GH/s would flatten to 0.15.
+    #[test]
+    fn the_rate_switches_unit_at_one_billion_hashes_a_second() {
+        assert_eq!(format_rate(11.25e9), "  11.25 GH/s", "GPU rate");
+        assert_eq!(format_rate(1e9), "   1.00 GH/s", "exactly one billion");
+        assert_eq!(format_rate(145.04e6), " 145.04 MH/s", "CPU rate");
+        assert_eq!(format_rate(9.9e6), "   9.90 MH/s", "single core");
     }
 }

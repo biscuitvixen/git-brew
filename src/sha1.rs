@@ -1,11 +1,12 @@
 //! Host-side SHA-1: midstate computation and independent verification.
 //!
-//! This deliberately duplicates the C++ core rather than calling it. The
-//! native side and git each compute the digest their own way; a winning
-//! object must satisfy this implementation, the prefix, and `git
-//! hash-object` before any ref moves, so a silent divergence in any one of
-//! the three implementations cannot corrupt a repository. Only whole-buffer
-//! and midstate hashing exist here; throughput hashing is the GPU's job.
+//! This deliberately duplicates the search backends' cores rather than
+//! calling them. The backend that found a hit and git each compute the
+//! digest their own way; a winning object must satisfy this
+//! implementation, the prefix, and `git hash-object` before any ref moves,
+//! so a silent divergence in any one of the three implementations cannot
+//! corrupt a repository. Only whole-buffer and midstate hashing exist
+//! here; throughput hashing is the backends' job.
 
 /// SHA-1 initial hash state H0..H4 (FIPS 180-4 section 5.3.1).
 pub const INIT_STATE: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
@@ -108,7 +109,7 @@ mod tests {
     }
 
     // NIST FIPS 180-4 / CAVP SHA-1 vectors, as listed in RFC 3174 section
-    // 7.3; the same fixtures as native/tests/test_sha1.cpp so the two
+    // 7.3; the same fixtures as src/cuda/tests/test_sha1.cpp so the two
     // implementations are pinned to identical references.
     #[test]
     fn nist_vectors_match() {
@@ -149,7 +150,7 @@ mod tests {
     }
 
     // The same commit fixture as the C++ tests; provenance is recorded in
-    // native/tests/test_sha1.cpp.
+    // src/cuda/tests/test_sha1.cpp.
     #[test]
     fn git_commit_oid_matches_wrapper_plus_content() {
         let content = b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\

@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
-#include "core/sha1.hpp"
-#include "tests/check.hpp"
+#include "check.hpp"
+#include "sha1.hpp"
 
 namespace {
 

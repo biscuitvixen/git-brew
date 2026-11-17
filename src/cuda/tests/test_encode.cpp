@@ -11,9 +11,9 @@
 #include <string>
 #include <vector>
 
-#include "core/encode.hpp"
-#include "core/sha1.hpp"
-#include "tests/check.hpp"
+#include "check.hpp"
+#include "encode.hpp"
+#include "sha1.hpp"
 
 namespace {
 

@@ -1,10 +1,10 @@
-//! Chunked search driver: sweeps the candidate space one launch at a time.
+//! Chunked search driver: sweeps the candidate space one chunk at a time.
 //!
-//! One kernel launch per chunk keeps the GPU saturated while bounding how
-//! long a Ctrl-C or a progress update waits on a running launch. The chunk
-//! size adapts to the measured launch time instead of assuming a
-//! throughput, so the loop lands near the target cadence on any GPU
-//! without configuration.
+//! One backend call per chunk keeps the hardware saturated while bounding
+//! how long a Ctrl-C or a progress update waits on a running call. The
+//! chunk size starts where the backend asks and adapts to the measured
+//! call time instead of assuming a throughput, so the loop lands near the
+//! target cadence on any hardware without configuration.
 //!
 //! The loop reaches the hardware only through the Backend trait, so it
 //! holds no device state and its own logic is testable on a machine with
@@ -18,14 +18,10 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::gpu::SearchError;
+use crate::backend::{Backend, SearchError};
 
 /// Bits in the candidate space; mirrors the 48 pad characters.
 pub const SPACE_BITS: u32 = 48;
-
-/// First chunk size. 2^28 is small enough that even a slow GPU answers in
-/// well under a second, so the adaptive loop starts responsive and grows.
-const START_CHUNK: u64 = 1 << 28;
 
 /// Chunk growth stops here: past 2^34 a single call could hold the GPU for
 /// many seconds on a mid-range card, defeating cancellation.
@@ -56,25 +52,6 @@ pub enum Outcome {
     Interrupted,
 }
 
-/// Something that can search one candidate range in a single call.
-pub trait Backend {
-    /// Search `range` for a candidate whose digest starts with
-    /// `prefix_nibbles`.
-    ///
-    /// `midstate` is the SHA-1 state after every block before the final
-    /// one; `tail` is the fully padded final block whose first 48 bytes
-    /// the search overwrites. Returns `Ok(Some(candidate))` on a hit,
-    /// `Ok(None)` when the range is exhausted. Which hit is returned when
-    /// several candidates in the range match is unspecified.
-    fn search_range(
-        &mut self,
-        midstate: &[u32; 5],
-        tail: &[u8; 64],
-        prefix_nibbles: &[u8],
-        range: Range<u64>,
-    ) -> Result<Option<u64>, SearchError>;
-}
-
 /// Sweep `range` for a candidate matching `prefix_nibbles`.
 ///
 /// `interrupt` is checked between chunks; `progress` runs after every chunk.
@@ -90,7 +67,8 @@ pub fn run(
     let total = range.end - range.start;
     let started = Instant::now();
     let mut next = range.start;
-    let mut chunk = START_CHUNK;
+    let start_chunk = backend.start_chunk();
+    let mut chunk = start_chunk;
     while next < range.end {
         if interrupt.load(Ordering::Relaxed) {
             return Ok(Outcome::Interrupted);
@@ -113,7 +91,7 @@ pub fn run(
         // fast, halve when a chunk overshoots badly.
         if took < TARGET_CHUNK_TIME && chunk < MAX_CHUNK {
             chunk *= 2;
-        } else if took > 2 * TARGET_CHUNK_TIME && chunk > START_CHUNK {
+        } else if took > 2 * TARGET_CHUNK_TIME && chunk > start_chunk {
             chunk /= 2;
         }
     }
@@ -123,9 +101,8 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commit;
-    use crate::gpu::Searcher;
-    use crate::sha1;
+    use crate::backend::testing::{fixture, host_nibbles};
+    use crate::host::HostSearcher;
 
     /// A backend for tests in which no range may be searched at all.
     struct NeverCalled;
@@ -140,49 +117,41 @@ mod tests {
         ) -> Result<Option<u64>, SearchError> {
             panic!("backend was asked to search {range:?}");
         }
-    }
 
-    struct Fixture {
-        midstate: [u32; 5],
-        tail: [u8; 64],
-        padded: commit::PaddedCommit,
-    }
-
-    fn fixture() -> Fixture {
-        let content = b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n\
-            author Test Author <author@example.com> 1700000000 +0000\n\
-            committer Test Committer <committer@example.com> 1700000000 +0000\n\
-            \n\
-            Search driver fixture\n";
-        let padded = commit::prepare(content).expect("fixture must prepare");
-        let mut midstate = sha1::INIT_STATE;
-        sha1::update_blocks(&mut midstate, padded.midstate_prefix());
-        Fixture {
-            midstate,
-            tail: padded.tail(),
-            padded,
+        fn start_chunk(&self) -> u64 {
+            1 << 20
         }
     }
 
-    fn digest_nibbles(digest: &[u8; 20], n: usize) -> Vec<u8> {
-        (0..n)
-            .map(|i| {
-                if i % 2 == 0 {
-                    digest[i / 2] >> 4
-                } else {
-                    digest[i / 2] & 0xF
-                }
-            })
-            .collect()
+    /// A backend that finds nothing and records every range it is given.
+    struct Recording {
+        ranges: Vec<Range<u64>>,
     }
 
+    impl Backend for Recording {
+        fn search_range(
+            &mut self,
+            _midstate: &[u32; 5],
+            _tail: &[u8; 64],
+            _prefix_nibbles: &[u8],
+            range: Range<u64>,
+        ) -> Result<Option<u64>, SearchError> {
+            self.ranges.push(range);
+            Ok(None)
+        }
+
+        fn start_chunk(&self) -> u64 {
+            16
+        }
+    }
+
+    // The ordinary successful run: a hit in the first chunk ends the
+    // search, and the candidate handed back is one the verifying SHA-1
+    // accepts.
     #[test]
     fn a_short_prefix_search_finds_a_verified_hit() {
-        if crate::gpu::skip_gpu_tests() {
-            return;
-        }
         let f = fixture();
-        let mut searcher = Searcher::new().expect("device must initialise");
+        let mut searcher = HostSearcher::new();
         let interrupt = AtomicBool::new(false);
         let mut updates = 0u32;
         let outcome = run(
@@ -198,24 +167,25 @@ mod tests {
         let Outcome::Found(candidate) = outcome else {
             panic!("1-nibble search must find a hit, got {outcome:?}");
         };
-        let digest = sha1::digest(&f.padded.object_for(candidate));
-        assert_eq!(digest[0] >> 4, 0xB, "hit must verify on the host SHA-1");
+        assert_eq!(
+            host_nibbles(&f, candidate)[0],
+            0xB,
+            "hit must verify on the host SHA-1"
+        );
     }
 
+    // A range with nothing to find must end as Exhausted, with the last
+    // progress report covering the whole range.
     #[test]
     fn an_impossible_target_over_a_small_range_reports_exhausted() {
-        if crate::gpu::skip_gpu_tests() {
-            return;
-        }
         let f = fixture();
         // A 12-nibble target taken from a candidate outside the range: a
         // collision inside it is a ~2^-38 event.
         let outside = 1_000_000u64;
-        let digest = sha1::digest(&f.padded.object_for(outside));
-        let target = digest_nibbles(&digest, 12);
+        let target = host_nibbles(&f, outside);
         let interrupt = AtomicBool::new(false);
         let mut last_done = 0u64;
-        let mut searcher = Searcher::new().expect("device must initialise");
+        let mut searcher = HostSearcher::new();
         let outcome = run(
             &mut searcher,
             &f.midstate,
@@ -233,6 +203,33 @@ mod tests {
         assert_eq!(last_done, 1024, "progress must end at the range size");
     }
 
+    // The chunks of one run must tile the range: a gap is a candidate
+    // never searched, an overlap is wasted work. A backend that answers
+    // instantly also makes every chunk double, starting from the size
+    // the backend asked for, until the range runs out.
+    #[test]
+    fn chunks_tile_the_range_and_double_from_the_backends_start_size() {
+        let f = fixture();
+        let mut backend = Recording { ranges: Vec::new() };
+        let interrupt = AtomicBool::new(false);
+        let outcome = run(
+            &mut backend,
+            &f.midstate,
+            &f.tail,
+            &[0x0],
+            100..1100,
+            &interrupt,
+            &mut |_| {},
+        )
+        .expect("search must not error");
+        assert_eq!(outcome, Outcome::Exhausted, "nothing was there to find");
+        // 16 + 32 + 64 + 128 + 256 = 496, then 504 of the next 512.
+        let expected = [100..116, 116..148, 148..212, 212..340, 340..596, 596..1100];
+        assert_eq!(backend.ranges, expected, "ranges handed to the backend");
+    }
+
+    // Ctrl-C before the first chunk: the backend must not be asked to
+    // search anything.
     #[test]
     fn a_raised_interrupt_flag_stops_before_any_chunk_runs() {
         let f = fixture();

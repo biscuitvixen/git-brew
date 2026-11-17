@@ -20,14 +20,14 @@
  * and looks the kernel and the two globals up by name, so all three have
  * C linkage; a C++ name would carry a per-file hash on Linux and MSVC
  * decoration on Windows. SearchParams crosses the same boundary by value
- * and is mirrored by a repr(C) struct in src/gpu.rs, with the layout
+ * and is mirrored by a repr(C) struct in src/cuda/mod.rs, with the layout
  * pinned here by static_assert.
  */
 #include <cstddef>
 #include <cstdint>
 
-#include "core/encode.hpp"
-#include "core/sha1.hpp"
+#include "encode.hpp"
+#include "sha1.hpp"
 
 namespace {
 
@@ -48,13 +48,14 @@ struct SearchParams {
     uint64_t end;        ///< Exclusive.
 };
 
-static_assert(sizeof(SearchParams) == 64, "SearchParams size differs from src/gpu.rs");
+static_assert(sizeof(SearchParams) == 64,
+              "SearchParams size differs from src/cuda/mod.rs");
 static_assert(offsetof(SearchParams, total_len) == 24,
-              "SearchParams::total_len offset differs from src/gpu.rs");
+              "SearchParams::total_len offset differs from src/cuda/mod.rs");
 static_assert(offsetof(SearchParams, target0) == 32,
-              "SearchParams::target0 offset differs from src/gpu.rs");
+              "SearchParams::target0 offset differs from src/cuda/mod.rs");
 static_assert(offsetof(SearchParams, start) == 48,
-              "SearchParams::start offset differs from src/gpu.rs");
+              "SearchParams::start offset differs from src/cuda/mod.rs");
 
 extern "C" {
 
