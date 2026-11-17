@@ -43,6 +43,10 @@ use crate::backend::{Backend, SearchArgs, SearchError};
 const KERNEL_THREADS: u32 = 256;
 const KERNEL_BLOCKS_PER_SM: u32 = 32;
 
+/// First range the search loop asks for. 2^28 is small enough that even
+/// a slow GPU answers in well under a second.
+const START_CHUNK: u64 = 1 << 28;
+
 /// Value of d_result while no thread has claimed a hit.
 const NO_RESULT: u64 = u64::MAX;
 
@@ -291,6 +295,10 @@ impl Backend for Searcher {
             )?;
         }
         Ok((found != 0 && result != NO_RESULT).then_some(result))
+    }
+
+    fn start_chunk(&self) -> u64 {
+        START_CHUNK
     }
 }
 

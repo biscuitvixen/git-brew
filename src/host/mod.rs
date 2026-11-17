@@ -6,22 +6,58 @@
 //! prefixes.
 //!
 //! The hashing itself is in `scalar`; this module checks the arguments
-//! and hands the range over. The range is swept in ascending order on
-//! the calling thread, so a hit is always the lowest matching candidate
-//! in the range.
+//! and spreads the range over the cores. The range is cut into blocks of
+//! BLOCK candidates, and each thread claims the next unclaimed block
+//! from a shared counter until none are left, which keeps every core
+//! busy however unevenly they run. The lowest hit so far is shared too.
+//! Blocks are claimed in ascending order, so when a hit is recorded
+//! every block below it is already claimed; those are searched to the
+//! end, and no thread starts a block above it. The result is therefore
+//! the lowest matching candidate in the range whatever the thread count
+//! or timing, the same answer a single thread walking the range gives.
+//!
+//! Threads are started for each call and joined before it returns. A
+//! call lasts a few hundred milliseconds once the search loop has found
+//! its pace, against which starting them is not measurable.
 
 mod scalar;
 
+use std::num::NonZero;
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
 
 use crate::backend::{Backend, SearchArgs, SearchError};
 
-/// Searches on the calling thread.
-pub struct HostSearcher;
+/// Candidates a thread hashes per claim. Small enough that the work
+/// done past a hit is a few blocks, large enough that the shared
+/// counter is touched a few thousand times a second per thread.
+const BLOCK: u64 = 1 << 12;
+
+/// First range the search loop asks for: about a tenth of a second on
+/// a single slow core.
+const START_CHUNK: u64 = 1 << 20;
+
+/// Value of the shared lowest hit while no thread has found one. No
+/// candidate reaches it, as candidates are below 2^48.
+const NO_HIT: u64 = u64::MAX;
+
+/// Searches on a fixed number of threads.
+pub struct HostSearcher {
+    threads: usize,
+}
 
 impl HostSearcher {
+    /// A searcher using every core the process may run on.
     pub fn new() -> Self {
-        HostSearcher
+        Self::with_threads(thread::available_parallelism().map_or(1, NonZero::get))
+    }
+
+    /// A searcher using `threads` threads, at least one.
+    pub fn with_threads(threads: usize) -> Self {
+        HostSearcher {
+            threads: threads.max(1),
+        }
     }
 }
 
@@ -34,7 +70,46 @@ impl Backend for HostSearcher {
         range: Range<u64>,
     ) -> Result<Option<u64>, SearchError> {
         let args = SearchArgs::check(tail, prefix_nibbles, &range)?;
-        Ok(scalar::scan(midstate, &args, range))
+        let blocks = (range.end - range.start).div_ceil(BLOCK);
+        let next_block = AtomicU64::new(0);
+        let lowest_hit = AtomicU64::new(NO_HIT);
+
+        // What one thread does: claim blocks in turn until the range or
+        // the need for it runs out.
+        let work = || loop {
+            let block = next_block.fetch_add(1, Ordering::Relaxed);
+            if block >= blocks {
+                break;
+            }
+            let start = range.start + block * BLOCK;
+            // A block that starts above a recorded hit cannot hold a
+            // lower one, and neither can any block claimed after it.
+            if start > lowest_hit.load(Ordering::Relaxed) {
+                break;
+            }
+            let end = range.end.min(start + BLOCK);
+            if let Some(hit) = scalar::scan(midstate, &args, start..end) {
+                lowest_hit.fetch_min(hit, Ordering::Relaxed);
+                break;
+            }
+        };
+
+        // No more threads than blocks; the calling thread is one of
+        // them, so a range of a single block starts none.
+        let extra_threads = (self.threads as u64).min(blocks).saturating_sub(1);
+        thread::scope(|scope| {
+            for _ in 0..extra_threads {
+                scope.spawn(work);
+            }
+            work();
+        });
+
+        let hit = lowest_hit.into_inner();
+        Ok((hit != NO_HIT).then_some(hit))
+    }
+
+    fn start_chunk(&self) -> u64 {
+        START_CHUNK
     }
 }
 
@@ -187,5 +262,54 @@ mod tests {
             matches!(outcome, Err(SearchError::BadArgs(_))),
             "an empty prefix must be refused, got {outcome:?}"
         );
+    }
+
+    // The thread count must not change the answer. A 3-digit target has
+    // a match every 4096 candidates on average, so a range of 2^18 holds
+    // dozens spread over many blocks, and the lowest is rarely in the
+    // first block claimed. The range starts and ends off a block
+    // boundary so the short last block is searched too.
+    #[test]
+    fn every_thread_count_returns_the_single_threaded_answer() {
+        let f = fixture();
+        let mut rng = 7u64;
+        for trial in 0..16 {
+            let start = next_candidate(&mut rng) >> 1;
+            let range = start..start + (1 << 18) + 777;
+            let target: [u8; 3] = std::array::from_fn(|_| (next_candidate(&mut rng) & 0xF) as u8);
+            let search = |threads: usize| {
+                HostSearcher::with_threads(threads)
+                    .search_range(&f.midstate, &f.tail, &target, range.clone())
+                    .expect("search must not error")
+            };
+            let single = search(1);
+            assert!(
+                single.is_some(),
+                "trial {trial}: 2^18 candidates held no match"
+            );
+            for threads in [2, 3, 8, 64] {
+                assert_eq!(
+                    search(threads),
+                    single,
+                    "trial {trial}: {threads} threads against one"
+                );
+            }
+        }
+    }
+
+    // A match in the very last candidate of a range that is not a whole
+    // number of blocks: the short final block must be claimed and
+    // searched to its end.
+    #[test]
+    fn a_match_at_the_end_of_a_ragged_range_is_found() {
+        let f = fixture();
+        let mut rng = 99u64;
+        let candidate = next_candidate(&mut rng) | (1 << 40);
+        let target = host_nibbles(&f, candidate);
+        let range = candidate - 5 * BLOCK - 123..candidate + 1;
+        let hit = HostSearcher::with_threads(4)
+            .search_range(&f.midstate, &f.tail, &target, range)
+            .expect("search must not error");
+        assert_eq!(hit, Some(candidate), "match in the last candidate");
     }
 }

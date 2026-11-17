@@ -37,6 +37,12 @@ pub trait Backend {
         prefix_nibbles: &[u8],
         range: Range<u64>,
     ) -> Result<Option<u64>, SearchError>;
+
+    /// Size of the first range the search loop should ask for: small
+    /// enough that this backend answers well inside a second on slow
+    /// hardware. The loop grows its ranges from here and never asks for
+    /// less, except at the end of the candidate space.
+    fn start_chunk(&self) -> u64;
 }
 
 #[derive(Debug)]

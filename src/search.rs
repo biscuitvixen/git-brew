@@ -1,10 +1,10 @@
-//! Chunked search driver: sweeps the candidate space one launch at a time.
+//! Chunked search driver: sweeps the candidate space one chunk at a time.
 //!
-//! One kernel launch per chunk keeps the GPU saturated while bounding how
-//! long a Ctrl-C or a progress update waits on a running launch. The chunk
-//! size adapts to the measured launch time instead of assuming a
-//! throughput, so the loop lands near the target cadence on any GPU
-//! without configuration.
+//! One backend call per chunk keeps the hardware saturated while bounding
+//! how long a Ctrl-C or a progress update waits on a running call. The
+//! chunk size starts where the backend asks and adapts to the measured
+//! call time instead of assuming a throughput, so the loop lands near the
+//! target cadence on any hardware without configuration.
 //!
 //! The loop reaches the hardware only through the Backend trait, so it
 //! holds no device state and its own logic is testable on a machine with
@@ -22,10 +22,6 @@ use crate::backend::{Backend, SearchError};
 
 /// Bits in the candidate space; mirrors the 48 pad characters.
 pub const SPACE_BITS: u32 = 48;
-
-/// First chunk size. 2^28 is small enough that even a slow GPU answers in
-/// well under a second, so the adaptive loop starts responsive and grows.
-const START_CHUNK: u64 = 1 << 28;
 
 /// Chunk growth stops here: past 2^34 a single call could hold the GPU for
 /// many seconds on a mid-range card, defeating cancellation.
@@ -71,7 +67,8 @@ pub fn run(
     let total = range.end - range.start;
     let started = Instant::now();
     let mut next = range.start;
-    let mut chunk = START_CHUNK;
+    let start_chunk = backend.start_chunk();
+    let mut chunk = start_chunk;
     while next < range.end {
         if interrupt.load(Ordering::Relaxed) {
             return Ok(Outcome::Interrupted);
@@ -94,7 +91,7 @@ pub fn run(
         // fast, halve when a chunk overshoots badly.
         if took < TARGET_CHUNK_TIME && chunk < MAX_CHUNK {
             chunk *= 2;
-        } else if took > 2 * TARGET_CHUNK_TIME && chunk > START_CHUNK {
+        } else if took > 2 * TARGET_CHUNK_TIME && chunk > start_chunk {
             chunk /= 2;
         }
     }
@@ -119,6 +116,32 @@ mod tests {
             range: Range<u64>,
         ) -> Result<Option<u64>, SearchError> {
             panic!("backend was asked to search {range:?}");
+        }
+
+        fn start_chunk(&self) -> u64 {
+            1 << 20
+        }
+    }
+
+    /// A backend that finds nothing and records every range it is given.
+    struct Recording {
+        ranges: Vec<Range<u64>>,
+    }
+
+    impl Backend for Recording {
+        fn search_range(
+            &mut self,
+            _midstate: &[u32; 5],
+            _tail: &[u8; 64],
+            _prefix_nibbles: &[u8],
+            range: Range<u64>,
+        ) -> Result<Option<u64>, SearchError> {
+            self.ranges.push(range);
+            Ok(None)
+        }
+
+        fn start_chunk(&self) -> u64 {
+            16
         }
     }
 
@@ -178,6 +201,31 @@ mod tests {
         .expect("search must not error");
         assert_eq!(outcome, Outcome::Exhausted, "range without the target");
         assert_eq!(last_done, 1024, "progress must end at the range size");
+    }
+
+    // The chunks of one run must tile the range: a gap is a candidate
+    // never searched, an overlap is wasted work. A backend that answers
+    // instantly also makes every chunk double, starting from the size
+    // the backend asked for, until the range runs out.
+    #[test]
+    fn chunks_tile_the_range_and_double_from_the_backends_start_size() {
+        let f = fixture();
+        let mut backend = Recording { ranges: Vec::new() };
+        let interrupt = AtomicBool::new(false);
+        let outcome = run(
+            &mut backend,
+            &f.midstate,
+            &f.tail,
+            &[0x0],
+            100..1100,
+            &interrupt,
+            &mut |_| {},
+        )
+        .expect("search must not error");
+        assert_eq!(outcome, Outcome::Exhausted, "nothing was there to find");
+        // 16 + 32 + 64 + 128 + 256 = 496, then 504 of the next 512.
+        let expected = [100..116, 116..148, 148..212, 212..340, 340..596, 596..1100];
+        assert_eq!(backend.ranges, expected, "ranges handed to the backend");
     }
 
     // Ctrl-C before the first chunk: the backend must not be asked to
