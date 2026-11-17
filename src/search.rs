@@ -18,7 +18,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::cuda::SearchError;
+use crate::backend::{Backend, SearchError};
 
 /// Bits in the candidate space; mirrors the 48 pad characters.
 pub const SPACE_BITS: u32 = 48;
@@ -54,25 +54,6 @@ pub enum Outcome {
     Exhausted,
     /// The interrupt flag was raised between chunks.
     Interrupted,
-}
-
-/// Something that can search one candidate range in a single call.
-pub trait Backend {
-    /// Search `range` for a candidate whose digest starts with
-    /// `prefix_nibbles`.
-    ///
-    /// `midstate` is the SHA-1 state after every block before the final
-    /// one; `tail` is the fully padded final block whose first 48 bytes
-    /// the search overwrites. Returns `Ok(Some(candidate))` on a hit,
-    /// `Ok(None)` when the range is exhausted. Which hit is returned when
-    /// several candidates in the range match is unspecified.
-    fn search_range(
-        &mut self,
-        midstate: &[u32; 5],
-        tail: &[u8; 64],
-        prefix_nibbles: &[u8],
-        range: Range<u64>,
-    ) -> Result<Option<u64>, SearchError>;
 }
 
 /// Sweep `range` for a candidate matching `prefix_nibbles`.

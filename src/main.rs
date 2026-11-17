@@ -6,6 +6,7 @@
 //! before HEAD moves. The GPU is only ever a search oracle; nothing it
 //! returns is trusted without reverification.
 
+mod backend;
 mod commit;
 mod cuda;
 mod git;
@@ -85,10 +86,10 @@ impl From<String> for ToolError {
 
 /// Lowercase and validate the prefix, one nibble value per hex digit.
 fn parse_prefix(prefix: &str) -> Result<Vec<u8>, ToolError> {
-    if prefix.is_empty() || prefix.len() > cuda::MAX_PREFIX_NIBBLES {
+    if prefix.is_empty() || prefix.len() > backend::MAX_PREFIX_NIBBLES {
         return Err(ToolError::Usage(format!(
             "prefix '{prefix}' must be 1 to {} hex digits",
-            cuda::MAX_PREFIX_NIBBLES
+            backend::MAX_PREFIX_NIBBLES
         )));
     }
     prefix
